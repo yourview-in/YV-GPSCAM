@@ -79,7 +79,7 @@ jobs:
                   open(m_path, "w").write(txt.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1))
           files = glob.glob("app/src/main/**/MainActivity.kt", recursive=True) + glob.glob("app/src/main/**/MainActivity.java", recursive=True)
           if not files: exit(0)
-          tf = files
+          tf = files.pop(0)
           src = open(tf).read()
           pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
           pkg_line = pm.group(1).strip() if pm else "package com.aistudio.yvgpscam.k7m4xp"
@@ -120,7 +120,7 @@ jobs:
           if "AutoAppUpdater.checkForUpdate" not in src:
               rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
               s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
-              if n > 0: open(tf, "w").write(s2)
+              if n > 0: open(tf, "w").write(s2); print("✅ Injected AutoAppUpdater into", tf)
           EOF
 
       - name: Setup Gradle
