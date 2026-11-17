@@ -48,7 +48,6 @@ jobs:
                       old_pkgs.add(".".join(ref.split(".")[:3]))
 
           for old in old_pkgs:
-              print(f"Replacing old app package '{old}' -> '{NEW_PKG_RAW}'")
               for root, _, files in os.walk("app"):
                   for f in files:
                       if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
@@ -122,7 +121,7 @@ jobs:
           fi
           keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep "SHA1:"
 
-      - name: Inject API keys & generate google-services.json
+      - name: Inject API keys & Switch Static Map to Free OSM Tile Fallback
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
@@ -134,18 +133,6 @@ jobs:
           DRIVE_KEY="${GOOGLE_DRIVE_API_KEY:-placeholder}"
           GEMINI_KEY="${GEMINI_API_KEY:-placeholder}"
           MAPS_KEY="${MAPS_API_KEY:-placeholder}"
-
-          if [ "$MAPS_KEY" = "placeholder" ]; then
-            echo "⚠️ WARNING: MAPS_API_KEY secret is empty or not set in GitHub Secrets!"
-          else
-            echo "✅ MAPS_API_KEY loaded from GitHub Secrets (length: ${#MAPS_KEY})."
-          fi
-
-          if [ "$DRIVE_KEY" = "placeholder" ]; then
-            echo "⚠️ WARNING: GOOGLE_DRIVE_API_KEY secret is empty or not set in GitHub Secrets!"
-          else
-            echo "✅ GOOGLE_DRIVE_API_KEY loaded from GitHub Secrets (length: ${#DRIVE_KEY})."
-          fi
 
           printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> local.properties
           printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" > secrets.properties
@@ -159,13 +146,7 @@ jobs:
           gemini_key = os.environ["GEMINI_KEY"]
           client_id = os.environ["CLIENT_ID"]
 
-          # 1. Print full GoogleMapsComponents.kt and app/build.gradle.kts API blocks for complete visibility
-          for target_file in ["app/build.gradle.kts", "app/build.gradle", "app/src/main/java/in/yourview/yvgpscam/map/GoogleMapsComponents.kt"]:
-              if os.path.exists(target_file):
-                  print(f"=== {target_file} ===")
-                  print(open(target_file, encoding="utf-8", errors="ignore").read()[:3500])
-
-          # 2. Replace ALL placeholder strings in build.gradle / build.gradle.kts
+          # 1. Inject real API keys into build.gradle.kts / build.gradle
           for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
               if os.path.exists(gradle_file):
                   g_txt = open(gradle_file, encoding="utf-8").read()
@@ -184,57 +165,66 @@ jobs:
                       g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
                   open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-          # 3. Also replace MY_MAPS_API_KEY / MY_DRIVE_API_KEY in Kotlin source files (skipping unit tests)
+          # 2. Switch Static Map tile downloader & UI key gate to 100% free OpenStreetMap / Carto tiles (zero API key or billing needed!)
           for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
               k_txt = open(fp, encoding="utf-8", errors="ignore").read()
               orig_k = k_txt
-              if maps_key != "placeholder":
-                  k_txt = k_txt.replace("MY_MAPS_API_KEY", maps_key)
-                  k_txt = re.sub(r'((?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)\s*=\s*")[^"]*(")', rf'\g<1>{maps_key}\g<2>', k_txt)
-              if drive_key != "placeholder":
-                  k_txt = k_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
-                  k_txt = re.sub(r'((?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)\s*=\s*")[^"]*(")', rf'\g<1>{drive_key}\g<2>', k_txt)
+
+              # Bypass "API KEY REQUIRED" UI block in GoogleMapsComponents.kt
+              k_txt = re.sub(
+                  r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
+                  r'\1\n        return true',
+                  k_txt
+              )
+              k_txt = re.sub(
+                  r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*=)[^\r\n]+',
+                  r'\1 true',
+                  k_txt
+              )
+
+              # Replace Google Static Maps URL with free Carto/OSM raster tile generator (supports lat, lon, zoom without any API key)
+              if "maps.googleapis.com/maps/api/staticmap" in k_txt:
+                  # Replace buildStaticMapUrl function body or URL formatter cleanly
+                  helper_fn = '''
+              private fun buildFreeOsmTileUrl(lat: Double, lon: Double, zoom: Int, mapType: String): String {
+                  val z = zoom.coerceIn(1, 18)
+                  val n = Math.pow(2.0, z.toDouble())
+                  val x = ((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n.toInt() - 1)
+                  val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
+                  val y = ((1.0 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0 * n).toInt().coerceIn(0, n.toInt() - 1)
+                  return if (mapType.equals("satellite", ignoreCase = true) || mapType.equals("hybrid", ignoreCase = true)) {
+                      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$z/$y/$x"
+                  } else {
+                      "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y@2x.png"
+                  }
+              }
+          '''
+                  k_txt = re.sub(
+                      r'String\.format\(\s*Locale\.US\s*,\s*"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[^)]*\)',
+                      r'buildFreeOsmTileUrl(latitude, longitude, zoom, mapType)',
+                      k_txt
+                  )
+                  # Fallback if variable names are lat/lng instead of latitude/longitude
+                  k_txt = re.sub(
+                      r'String\.format\(\s*"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[^)]*\)',
+                      r'buildFreeOsmTileUrl(lat, lng, zoom, mapType)',
+                      k_txt
+                  )
+                  # Inject helper function right before last closing brace of class/object
+                  last_brace = k_txt.rfind("}")
+                  if last_brace != -1 and "buildFreeOsmTileUrl" in k_txt:
+                      k_txt = k_txt[:last_brace] + helper_fn + "\n}"
+
               if k_txt != orig_k:
-                  print(f"Updated API key placeholder in {fp}")
+                  print(f"✅ Updated map provider to free OSM/Carto tiles in {fp}")
                   open(fp, "w", encoding="utf-8").write(k_txt)
 
-          # 4. Update AndroidManifest.xml meta-data
+          # 3. Update AndroidManifest.xml meta-data
           manifest_path = "app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path):
+          if os.path.exists(manifest_path) and maps_key != "placeholder":
               m_txt = open(manifest_path, encoding="utf-8").read()
-              if "com.google.android.geo.API_KEY" in m_txt:
-                  m_txt = re.sub(
-                      r'(<meta-data[^>]*android:name="com\.google\.android\.geo\.API_KEY"[^>]*android:value=")[^"]*(")',
-                      rf'\g<1>{maps_key}\g<2>',
-                      m_txt
-                  )
-              elif maps_key != "placeholder":
-                  m_txt = m_txt.replace(
-                      "</application>",
-                      f'    <meta-data android:name="com.google.android.geo.API_KEY" android:value="{maps_key}" />\n    </application>',
-                      1
-                  )
+              m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
               open(manifest_path, "w", encoding="utf-8").write(m_txt)
-
-          # 5. Replace any placeholder/empty string resources in res/values/*.xml
-          res_dir = "app/src/main/res/values"
-          if os.path.isdir(res_dir):
-              for fn in os.listdir(res_dir):
-                  if fn.endswith(".xml"):
-                      fp = os.path.join(res_dir, fn)
-                      r_txt = open(fp, encoding="utf-8").read()
-                      new_txt = re.sub(
-                          r'(<string\s+name="(?:google_maps_key|maps_api_key|MAPS_API_KEY|google_api_key)"[^>]*>)[^<]*(</string>)',
-                          rf'\g<1>{maps_key}\g<2>',
-                          r_txt
-                      )
-                      new_txt = re.sub(
-                          r'(<string\s+name="(?:google_drive_api_key|GOOGLE_DRIVE_API_KEY)"[^>]*>)[^<]*(</string>)',
-                          rf'\g<1>{drive_key}\g<2>',
-                          new_txt
-                      )
-                      if new_txt != r_txt:
-                          open(fp, "w", encoding="utf-8").write(new_txt)
           EOF
 
           cat << EOF > app/google-services.json
