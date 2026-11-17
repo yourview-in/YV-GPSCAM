@@ -246,7 +246,7 @@ object AutoAppUpdater {{
                 if (lc > cc) Handler(Looper.getMainLooper()).post {{
                     try {{
                         AlertDialog.Builder(ctx).setTitle("Update Available (v$ln)")
-                            .setMessage("What's New:\n$notes\n\nTap Update Now to install.")
+                            .setMessage("What's New:\\n$notes\\n\\nTap Update Now to install.")
                             .setPositiveButton("Update Now") {{ _, _ -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk))) }}
                             .setNegativeButton("Later", null).show()
                     }} catch (_: Exception) {{}}
