@@ -121,7 +121,7 @@ jobs:
           fi
           keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep "SHA1:"
 
-      - name: Inject API keys & Route Static Maps to Built-In Free OSM/ArcGIS Tiles
+      - name: Inject API keys & Switch Static Map to Free OSM Tiles
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
@@ -138,13 +138,13 @@ jobs:
           printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" > secrets.properties
           printf "\nGOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> gradle.properties
 
-          MAPS_KEY="$MAPS_KEY" DRIVE_KEY="$DRIVE_KEY" GEMINI_KEY="$GEMINI_KEY" CLIENT_ID="$CLIENT_ID" python3 - << 'EOF'
+          cat << 'PYEOF' > patch_map_and_keys.py
           import os, re, glob
 
-          maps_key = os.environ["MAPS_KEY"]
-          drive_key = os.environ["DRIVE_KEY"]
-          gemini_key = os.environ["GEMINI_KEY"]
-          client_id = os.environ["CLIENT_ID"]
+          maps_key = os.environ.get("MAPS_API_KEY", "placeholder") or "placeholder"
+          drive_key = os.environ.get("GOOGLE_DRIVE_API_KEY", "placeholder") or "placeholder"
+          gemini_key = os.environ.get("GEMINI_API_KEY", "placeholder") or "placeholder"
+          client_id = os.environ.get("WEB_CLIENT_ID", "://googleusercontent.com") or "://googleusercontent.com"
 
           # 1. Inject real API keys into build.gradle.kts / build.gradle
           for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
@@ -152,70 +152,80 @@ jobs:
                   g_txt = open(gradle_file, encoding="utf-8").read()
                   if maps_key != "placeholder":
                       g_txt = g_txt.replace("MY_MAPS_API_KEY", maps_key)
-                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{maps_key}\\""\g<2>', g_txt)
-                      g_txt = re.sub(r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^\r\n]+', rf'\g<1>"{maps_key}"', g_txt)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\"{maps_key}\""\g<2>', g_txt)
+                      g_txt = re.sub(r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^
+]+', rf'\g<1>"{maps_key}"', g_txt)
                   if drive_key != "placeholder":
                       g_txt = g_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
-                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{drive_key}\\""\g<2>', g_txt)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\"{drive_key}\""\g<2>', g_txt)
                   if gemini_key != "placeholder":
                       g_txt = g_txt.replace("MY_GEMINI_API_KEY", gemini_key)
-                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{gemini_key}\\""\g<2>', g_txt)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))', rf'\g<1>"\"{gemini_key}\""\g<2>', g_txt)
                   if "googleusercontent.com" in client_id and not client_id.startswith("://"):
                       g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
-                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\"{client_id}\""\g<2>', g_txt)
                   open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-          # 2. Bypass "API KEY REQUIRED" check in GoogleMapsComponents.kt
-          for fp in glob.glob("app/src/main/**/GoogleMapsComponents.kt", recursive=True):
-              k_txt = open(fp, encoding="utf-8").read()
+          # 2. Bypass isApiKeyConfigured() in GoogleMapsComponents.kt
+          for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
+              k_txt = open(fp, encoding="utf-8", errors="ignore").read()
+              orig_k = k_txt
               k_txt = re.sub(
                   r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
-                  r'\1\n        return true',
+                  r'
+        return true',
                   k_txt
               )
               k_txt = re.sub(
-                  r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*=)[^\r\n]+',
-                  r'\1 true',
+                  r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*=)[^
+]+',
+                  r' true',
                   k_txt
               )
-              open(fp, "w", encoding="utf-8").write(k_txt)
-              print(f"✅ Enabled map UI without API key in {fp}")
+              if k_txt != orig_k:
+                  open(fp, "w", encoding="utf-8").write(k_txt)
 
-          # 3. Update OfflineMapRepository.kt to use its own free Carto/ArcGIS tile fetcher for static map previews
-          for fp in glob.glob("app/src/main/**/OfflineMapRepository.kt", recursive=True):
-              r_txt = open(fp, encoding="utf-8").read()
+          # 3. Replace fetchGoogleStaticMapAndCache in OfflineMapRepository.kt to use built-in free tile fetcher
+          repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
+          if os.path.exists(repo_path):
+              r_txt = open(repo_path, encoding="utf-8").read()
               old_fn_pattern = re.compile(
-                  r'fun\s+fetchGoogleStaticMapAndCache\s*\(\s*lat:\s*Double,\s*lon:\s*Double,\s*zoom:\s*Int,\s*outputSizePx:\s*Int,\s*mapStyle:\s*MapStyle\s*\):\s*ByteArray\?\s*\{.*?\n    \}',
+                  r'fun\s+fetchGoogleStaticMapAndCache\s*\([^)]*\)\s*:\s*ByteArray\?\s*\{.*?(?=
+\s*fun\s+fetchHybridOverlayTile)',
                   re.DOTALL
               )
               new_fn = '''fun fetchGoogleStaticMapAndCache(
-        lat: Double,
-        lon: Double,
-        zoom: Int,
-        outputSizePx: Int,
-        mapStyle: MapStyle
-    ): ByteArray? {
-        val z = zoom.coerceIn(1, 18)
-        val n = 1 shl z
-        val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
-        val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
-        val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
-        return fetchTileFromNetworkAndCache(z, x, y, mapStyle)
-    }'''
+                  lat: Double,
+                  lon: Double,
+                  zoom: Int,
+                  outputSizePx: Int,
+                  mapStyle: MapStyle
+              ): ByteArray? {
+                  val z = zoom.coerceIn(1, 18)
+                  val n = 2.0.pow(z.toDouble())
+                  val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n.toInt() - 1)
+                  val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
+                  val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n.toInt() - 1)
+                  if (hasCachedTile(z, x, y, mapStyle)) {
+                      return runCatching { getTileFile(z, x, y, mapStyle).readBytes() }.getOrNull()
+                  }
+                  return fetchTileFromNetworkAndCache(z, x, y, mapStyle)
+              }
+
+          '''
               if old_fn_pattern.search(r_txt):
                   r_txt = old_fn_pattern.sub(new_fn, r_txt, count=1)
-                  open(fp, "w", encoding="utf-8").write(r_txt)
-                  print(f"✅ Routed fetchGoogleStaticMapAndCache to free Carto/ArcGIS tiles in {fp}")
-              else:
-                  print(f"⚠️ Could not match fetchGoogleStaticMapAndCache signature in {fp}")
+                  open(repo_path, "w", encoding="utf-8").write(r_txt)
+                  print("Patched fetchGoogleStaticMapAndCache to use free Carto/ArcGIS/OSM tiles!")
 
-          # 4. Update AndroidManifest.xml meta-data
           manifest_path = "app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path) and maps_key != "placeholder":
               m_txt = open(manifest_path, encoding="utf-8").read()
               m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
               open(manifest_path, "w", encoding="utf-8").write(m_txt)
-          EOF
+          PYEOF
+          python3 patch_map_and_keys.py
+          rm -f patch_map_and_keys.py
 
           cat << EOF > app/google-services.json
           {
@@ -240,12 +250,14 @@ jobs:
           if os.path.exists(m_path):
               txt = open(m_path).read()
               if "android.permission.INTERNET" not in txt:
-                  open(m_path, "w").write(txt.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1))
+                  open(m_path, "w").write(txt.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />
+    <application', 1))
           files = glob.glob("app/src/main/**/MainActivity.kt", recursive=True) + glob.glob("app/src/main/**/MainActivity.java", recursive=True)
           if not files: exit(0)
           tf = files.pop(0)
           src = open(tf).read()
-          pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
+          pm = re.search(r'^\s*(package\s+[^
+;]+)', src, re.M)
           pkg_line = pm.group(1).strip() if pm else "package `in`.yourview.yvgpscam"
           code = f'''{pkg_line}
           import android.app.AlertDialog
@@ -271,7 +283,7 @@ jobs:
                           if (lc > cc) Handler(Looper.getMainLooper()).post {{
                               try {{
                                   AlertDialog.Builder(ctx).setTitle("Update Available (v$ln)")
-                                      .setMessage("What's New:\\n$notes\\n\\nTap Update Now to install.")
+                                      .setMessage("What's New:\n$notes\n\nTap Update Now to install.")
                                       .setPositiveButton("Update Now") {{ _, _ -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk))) }}
                                       .setNegativeButton("Later", null).show()
                               }} catch (_: Exception) {{}}
@@ -280,9 +292,12 @@ jobs:
                   }}
               }}
           }}'''
-          open(os.path.join(os.path.dirname(tf), "AutoAppUpdater.kt"), "w").write("\n".join(l[10:] if l.startswith("          ") else l for l in code.splitlines()))
+          open(os.path.join(os.path.dirname(tf), "AutoAppUpdater.kt"), "w").write("
+".join(l[10:] if l.startswith("          ") else l for l in code.splitlines()))
           if "AutoAppUpdater.checkForUpdate" not in src:
-              rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
+              rep = r'
+        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'
+        AutoAppUpdater.checkForUpdate(this);'
               s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
               if n > 0: open(tf, "w").write(s2); print("Injected AutoAppUpdater into", tf)
           EOF
