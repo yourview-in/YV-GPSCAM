@@ -32,7 +32,6 @@ jobs:
           all_kt = glob.glob("app/src/**/*.kt", recursive=True)
           all_java = glob.glob("app/src/**/*.java", recursive=True)
 
-          # 1. Detect only genuine old app package roots (never touch third-party libraries like okhttp3, retrofit2, etc.)
           THIRD_PARTY_PREFIXES = (
               NEW_PKG_RAW, "android", "androidx", "com.google", "com.android", "com.squareup",
               "okhttp3", "okio", "retrofit2", "kotlin", "kotlinx", "java", "javax",
@@ -58,14 +57,12 @@ jobs:
                           if old in content:
                               open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG_RAW))
 
-          # 2. Ensure `in` is always escaped with backticks in Kotlin package/import lines
           for path in all_kt:
               txt = open(path, encoding="utf-8", errors="ignore").read()
               fixed = re.sub(r'(^\s*(?:package|import)\s+)in\.yourview\.yvgpscam', r'\1`in`.yourview.yvgpscam', txt, flags=re.M)
               if fixed != txt:
                   open(path, "w", encoding="utf-8").write(fixed)
 
-          # 3. Map every class/interface/object to its actual Kotlin package (with backticks)
           class_to_pkg = {}
           for path in all_kt:
               txt = open(path, encoding="utf-8", errors="ignore").read()
@@ -74,7 +71,6 @@ jobs:
               for m_cls in re.finditer(r'\b(?:class|interface|object|enum\s+class|annotation\s+class|data\s+class|sealed\s+class)\s+([A-Za-z0-9_]+)', txt):
                   class_to_pkg[m_cls.group(1)] = pkg
 
-          # 4. Fix moved subpackage imports & add missing imports across all Kotlin files
           for path in all_kt:
               txt = open(path, encoding="utf-8", errors="ignore").read()
               lines = txt.splitlines()
@@ -89,7 +85,6 @@ jobs:
                       if imp_pkg.replace("`", "").startswith(NEW_PKG_RAW) and cls_name in class_to_pkg:
                           real_pkg = class_to_pkg[cls_name]
                           if real_pkg != imp_pkg:
-                              print(f"Fixing import in {path}: {imp_pkg}.{cls_name} -> {real_pkg}.{cls_name}")
                               lines[i] = f"{prefix}{real_pkg}.{cls_name}{suffix}"
                               changed = True
 
@@ -99,7 +94,6 @@ jobs:
                           real_pkg = class_to_pkg[target]
                           imp_stmt = f"import {real_pkg}.{target}"
                           if real_pkg != cur_pkg and imp_stmt not in "\n".join(lines):
-                              print(f"Adding missing import to AppDatabase.kt: {imp_stmt}")
                               for idx, l in enumerate(lines):
                                   if l.startswith("package "):
                                       lines.insert(idx + 1, imp_stmt)
@@ -140,8 +134,69 @@ jobs:
           DRIVE_KEY="${GOOGLE_DRIVE_API_KEY:-placeholder}"
           GEMINI_KEY="${GEMINI_API_KEY:-placeholder}"
           MAPS_KEY="${MAPS_API_KEY:-placeholder}"
-          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" >> local.properties
-          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" > secrets.properties
+
+          if [ "$MAPS_KEY" = "placeholder" ]; then
+            echo "⚠️ WARNING: MAPS_API_KEY secret is empty or not set in GitHub Secrets!"
+          else
+            echo "✅ MAPS_API_KEY loaded from GitHub Secrets."
+          fi
+
+          if [ "$DRIVE_KEY" = "placeholder" ]; then
+            echo "⚠️ WARNING: GOOGLE_DRIVE_API_KEY secret is empty or not set in GitHub Secrets!"
+          else
+            echo "✅ GOOGLE_DRIVE_API_KEY loaded from GitHub Secrets."
+          fi
+
+          # Write keys to local.properties and secrets.properties
+          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> local.properties
+          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" > secrets.properties
+
+          # Also inject MAPS_API_KEY directly into AndroidManifest.xml and strings.xml if placeholders exist
+          MAPS_KEY="$MAPS_KEY" DRIVE_KEY="$DRIVE_KEY" python3 - << 'EOF'
+          import os, re
+
+          maps_key = os.environ["MAPS_KEY"]
+          drive_key = os.environ["DRIVE_KEY"]
+
+          # 1. Update AndroidManifest.xml meta-data for com.google.android.geo.API_KEY
+          manifest_path = "app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              m_txt = open(manifest_path, encoding="utf-8").read()
+              if "com.google.android.geo.API_KEY" in m_txt:
+                  m_txt = re.sub(
+                      r'(<meta-data[^>]*android:name="com\.google\.android\.geo\.API_KEY"[^>]*android:value=")[^"]*(")',
+                      rf'\g<1>{maps_key}\g<2>',
+                      m_txt
+                  )
+              elif maps_key != "placeholder":
+                  m_txt = m_txt.replace(
+                      "</application>",
+                      f'    <meta-data android:name="com.google.android.geo.API_KEY" android:value="{maps_key}" />\n    </application>',
+                      1
+                  )
+              open(manifest_path, "w", encoding="utf-8").write(m_txt)
+
+          # 2. Update any string resources in app/src/main/res/values/*.xml
+          res_dir = "app/src/main/res/values"
+          if os.path.isdir(res_dir):
+              for fn in os.listdir(res_dir):
+                  if fn.endswith(".xml"):
+                      fp = os.path.join(res_dir, fn)
+                      r_txt = open(fp, encoding="utf-8").read()
+                      new_txt = re.sub(
+                          r'(<string\s+name="(?:google_maps_key|maps_api_key|MAPS_API_KEY)"[^>]*>)[^<]*(</string>)',
+                          rf'\g<1>{maps_key}\g<2>',
+                          r_txt
+                      )
+                      new_txt = re.sub(
+                          r'(<string\s+name="(?:google_drive_api_key|GOOGLE_DRIVE_API_KEY)"[^>]*>)[^<]*(</string>)',
+                          rf'\g<1>{drive_key}\g<2>',
+                          new_txt
+                      )
+                      if new_txt != r_txt:
+                          open(fp, "w", encoding="utf-8").write(new_txt)
+          EOF
+
           cat << EOF > app/google-services.json
           {
             "project_info": { "project_number": "$PROJECT_NUM", "project_id": "yvgpscam-$PROJECT_NUM" },
