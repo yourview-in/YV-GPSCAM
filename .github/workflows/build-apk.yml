@@ -152,62 +152,89 @@ jobs:
           printf "\nGOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> gradle.properties
 
           MAPS_KEY="$MAPS_KEY" DRIVE_KEY="$DRIVE_KEY" GEMINI_KEY="$GEMINI_KEY" CLIENT_ID="$CLIENT_ID" python3 - << 'EOF'
-          import os, re
+          import os, re, glob
 
           maps_key = os.environ["MAPS_KEY"]
           drive_key = os.environ["DRIVE_KEY"]
           gemini_key = os.environ["GEMINI_KEY"]
           client_id = os.environ["CLIENT_ID"]
 
-          # Replace hardcoded "MY_MAPS_API_KEY" and placeholder keys in app/build.gradle.kts (which feeds BuildConfig.MAPS_API_KEY)
-          gradle_files = ["app/build.gradle.kts", "app/build.gradle"]
-          for gf in gradle_files:
-              if os.path.exists(gf):
-                  g_txt = open(gf, encoding="utf-8").read()
-                  new_g = g_txt
-                  if maps_key != "placeholder":
-                      new_g = new_g.replace('"MY_MAPS_API_KEY"', f'"{maps_key}"')
-                      new_g = re.sub(
-                          r'(buildConfigField\s*\(\s*"String"\s*,\s*"MAPS_API_KEY"\s*,\s*")[^"]*(")',
-                          rf'\g<1>\"{maps_key}\"\g<2>',
-                          new_g
-                      )
-                      new_g = re.sub(
-                          r'(manifestPlaceholders\["MAPS_API_KEY"\]\s*=\s*")[^"]*(")',
-                          rf'\g<1>{maps_key}\g<2>',
-                          new_g
-                      )
-                  if drive_key != "placeholder":
-                      new_g = new_g.replace('"MY_DRIVE_API_KEY"', f'"{drive_key}"').replace('"MY_GOOGLE_DRIVE_API_KEY"', f'"{drive_key}"')
-                      new_g = re.sub(
-                          r'(buildConfigField\s*\(\s*"String"\s*,\s*"GOOGLE_DRIVE_API_KEY"\s*,\s*")[^"]*(")',
-                          rf'\g<1>\"{drive_key}\"\g<2>',
-                          new_g
-                      )
-                  if gemini_key != "placeholder":
-                      new_g = new_g.replace('"MY_GEMINI_API_KEY"', f'"{gemini_key}"')
-                      new_g = re.sub(
-                          r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*")[^"]*(")',
-                          rf'\g<1>\"{gemini_key}\"\g<2>',
-                          new_g
-                      )
-                  if client_id != "://googleusercontent.com":
-                      new_g = new_g.replace('"MY_WEB_CLIENT_ID"', f'"{client_id}"')
-                      new_g = re.sub(
-                          r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*")[^"]*(")',
-                          rf'\g<1>\"{client_id}\"\g<2>',
-                          new_g
-                      )
-                  if new_g != g_txt:
-                      open(gf, "w", encoding="utf-8").write(new_g)
-                      print(f"✅ Injected real API keys into {gf} (BuildConfig & manifestPlaceholders)")
+          # 1. Print full GoogleMapsComponents.kt and app/build.gradle.kts API blocks for complete visibility
+          for target_file in ["app/build.gradle.kts", "app/build.gradle", "app/src/main/java/in/yourview/yvgpscam/map/GoogleMapsComponents.kt"]:
+              if os.path.exists(target_file):
+                  print(f"=== {target_file} ===")
+                  print(open(target_file, encoding="utf-8", errors="ignore").read()[:3500])
 
-          # Also update AndroidManifest.xml directly if hardcoded
+          # 2. Replace ALL placeholder strings in build.gradle / build.gradle.kts
+          for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
+              if os.path.exists(gradle_file):
+                  g_txt = open(gradle_file, encoding="utf-8").read()
+                  if maps_key != "placeholder":
+                      g_txt = g_txt.replace("MY_MAPS_API_KEY", maps_key)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{maps_key}\\""\g<2>', g_txt)
+                      g_txt = re.sub(r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^\r\n]+', rf'\g<1>"{maps_key}"', g_txt)
+                  if drive_key != "placeholder":
+                      g_txt = g_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{drive_key}\\""\g<2>', g_txt)
+                  if gemini_key != "placeholder":
+                      g_txt = g_txt.replace("MY_GEMINI_API_KEY", gemini_key)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{gemini_key}\\""\g<2>', g_txt)
+                  if "googleusercontent.com" in client_id and not client_id.startswith("://"):
+                      g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
+                      g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
+                  open(gradle_file, "w", encoding="utf-8").write(g_txt)
+
+          # 3. Also replace MY_MAPS_API_KEY / MY_DRIVE_API_KEY in Kotlin source files (skipping unit tests)
+          for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
+              k_txt = open(fp, encoding="utf-8", errors="ignore").read()
+              orig_k = k_txt
+              if maps_key != "placeholder":
+                  k_txt = k_txt.replace("MY_MAPS_API_KEY", maps_key)
+                  k_txt = re.sub(r'((?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)\s*=\s*")[^"]*(")', rf'\g<1>{maps_key}\g<2>', k_txt)
+              if drive_key != "placeholder":
+                  k_txt = k_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
+                  k_txt = re.sub(r'((?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)\s*=\s*")[^"]*(")', rf'\g<1>{drive_key}\g<2>', k_txt)
+              if k_txt != orig_k:
+                  print(f"Updated API key placeholder in {fp}")
+                  open(fp, "w", encoding="utf-8").write(k_txt)
+
+          # 4. Update AndroidManifest.xml meta-data
           manifest_path = "app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path) and maps_key != "placeholder":
+          if os.path.exists(manifest_path):
               m_txt = open(manifest_path, encoding="utf-8").read()
-              m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
+              if "com.google.android.geo.API_KEY" in m_txt:
+                  m_txt = re.sub(
+                      r'(<meta-data[^>]*android:name="com\.google\.android\.geo\.API_KEY"[^>]*android:value=")[^"]*(")',
+                      rf'\g<1>{maps_key}\g<2>',
+                      m_txt
+                  )
+              elif maps_key != "placeholder":
+                  m_txt = m_txt.replace(
+                      "</application>",
+                      f'    <meta-data android:name="com.google.android.geo.API_KEY" android:value="{maps_key}" />\n    </application>',
+                      1
+                  )
               open(manifest_path, "w", encoding="utf-8").write(m_txt)
+
+          # 5. Replace any placeholder/empty string resources in res/values/*.xml
+          res_dir = "app/src/main/res/values"
+          if os.path.isdir(res_dir):
+              for fn in os.listdir(res_dir):
+                  if fn.endswith(".xml"):
+                      fp = os.path.join(res_dir, fn)
+                      r_txt = open(fp, encoding="utf-8").read()
+                      new_txt = re.sub(
+                          r'(<string\s+name="(?:google_maps_key|maps_api_key|MAPS_API_KEY|google_api_key)"[^>]*>)[^<]*(</string>)',
+                          rf'\g<1>{maps_key}\g<2>',
+                          r_txt
+                      )
+                      new_txt = re.sub(
+                          r'(<string\s+name="(?:google_drive_api_key|GOOGLE_DRIVE_API_KEY)"[^>]*>)[^<]*(</string>)',
+                          rf'\g<1>{drive_key}\g<2>',
+                          new_txt
+                      )
+                      if new_txt != r_txt:
+                          open(fp, "w", encoding="utf-8").write(new_txt)
           EOF
 
           cat << EOF > app/google-services.json
