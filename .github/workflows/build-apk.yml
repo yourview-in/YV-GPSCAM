@@ -21,7 +21,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Auto-Fix Old Package Names & Inspect AppDatabase
+      - name: Auto-Fix Missing Imports & Package Names
         run: |
           python3 - << 'EOF'
           import os, re, glob
@@ -29,14 +29,22 @@ jobs:
           NEW_PKG = "in.yourview.yvgpscam"
           old_pkgs = set()
 
-          for path in glob.glob("app/src/**/*.*", recursive=True):
-              if path.endswith((".kt", ".java")):
-                  txt = open(path, encoding="utf-8", errors="ignore").read()
-                  for m in re.finditer(r'^\s*(?:package|import)\s+([a-zA-Z0-9_.]+)', txt, re.M):
-                      ref = m.group(1)
-                      if not ref.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
-                          old_pkgs.add(".".join(ref.split(".")[:3]))
+          # 1. Build a map of all defined classes/interfaces/objects in the project
+          class_to_pkg = {}
+          all_kt_java = glob.glob("app/src/**/*.kt", recursive=True) + glob.glob("app/src/**/*.java", recursive=True)
 
+          for path in all_kt_java:
+              txt = open(path, encoding="utf-8", errors="ignore").read()
+              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
+              pkg = m_pkg.group(1) if m_pkg else NEW_PKG
+              if not pkg.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
+                  old_pkgs.add(".".join(pkg.split(".")[:3]))
+              for m_imp in re.finditer(r'^\s*import\s+([a-zA-Z0-9_.]+)', txt, re.M):
+                  ref = m_imp.group(1)
+                  if not ref.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
+                      old_pkgs.add(".".join(ref.split(".")[:3]))
+
+          # 2. Replace leftover old package prefixes
           for old in old_pkgs:
               print(f"Replacing old package '{old}' -> '{NEW_PKG}'")
               for root, _, files in os.walk("app"):
@@ -47,10 +55,46 @@ jobs:
                           if old in content:
                               open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG))
 
-          print("=== AppDatabase.kt & Local Files ===")
-          for f in sorted(glob.glob("app/src/**/data/local/**/*.kt", recursive=True)):
-              print(f"--- {f} ---")
-              print(open(f, encoding="utf-8", errors="ignore").read())
+          # 3. Re-index all defined types across the project after package cleanup
+          for path in all_kt_java:
+              txt = open(path, encoding="utf-8", errors="ignore").read()
+              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
+              pkg = m_pkg.group(1) if m_pkg else NEW_PKG
+              for m_cls in re.finditer(r'\b(?:class|interface|object|enum\s+class|annotation\s+class|data\s+class|sealed\s+class)\s+([A-Za-z0-9_]+)', txt):
+                  class_to_pkg[m_cls.group(1)] = pkg
+
+          # 4. Fix broken imports in all files (especially AppDatabase.kt) where class moved subpackages
+          for path in all_kt_java:
+              txt = open(path, encoding="utf-8", errors="ignore").read()
+              lines = txt.splitlines()
+              changed = False
+              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
+              cur_pkg = m_pkg.group(1) if m_pkg else NEW_PKG
+
+              for i, line in enumerate(lines):
+                  m_imp = re.match(r'^(\s*import\s+)([a-zA-Z0-9_.]+)\.([A-Z][A-Za-z0-9_]*)(.*)$', line)
+                  if m_imp:
+                      prefix, imp_pkg, cls_name, suffix = m_imp.groups()
+                      if imp_pkg.startswith(NEW_PKG) and cls_name in class_to_pkg:
+                          real_pkg = class_to_pkg[cls_name]
+                          if real_pkg != imp_pkg:
+                              print(f"Fixing moved import in {path}: {imp_pkg}.{cls_name} -> {real_pkg}.{cls_name}")
+                              lines[i] = f"{prefix}{real_pkg}.{cls_name}{suffix}"
+                              changed = True
+
+              # Auto-add missing imports for types referenced in AppDatabase.kt
+              if path.endswith("AppDatabase.kt"):
+                  for cls_name, real_pkg in class_to_pkg.items():
+                      if real_pkg != cur_pkg and re.search(rf'\b{cls_name}\b', txt) and f".{cls_name}" not in txt:
+                          print(f"Adding missing import in AppDatabase.kt: import {real_pkg}.{cls_name}")
+                          for idx, l in enumerate(lines):
+                              if l.startswith("package "):
+                                  lines.insert(idx + 1, f"import {real_pkg}.{cls_name}")
+                                  changed = True
+                                  break
+
+              if changed:
+                  open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
           EOF
 
       - name: Setup debug.keystore & Print SHA-1
