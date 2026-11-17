@@ -32,12 +32,10 @@ jobs:
           for path in glob.glob("app/src/**/*.*", recursive=True):
               if path.endswith((".kt", ".java")):
                   txt = open(path, encoding="utf-8", errors="ignore").read()
-                  m = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
-                  if m:
-                      pkg = m.group(1)
-                      if not pkg.startswith(NEW_PKG) and not pkg.startswith(("android", "androidx", "com.google", "kotlin", "java")):
-                          base = ".".join(pkg.split(".")[:3])
-                          old_pkgs.add(base)
+                  for m in re.finditer(r'^\s*(?:package|import)\s+([a-zA-Z0-9_.]+)', txt, re.M):
+                      ref = m.group(1)
+                      if not ref.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
+                          old_pkgs.add(".".join(ref.split(".")[:3]))
 
           for old in old_pkgs:
               print(f"Replacing old package '{old}' -> '{NEW_PKG}'")
@@ -49,10 +47,10 @@ jobs:
                           if old in content:
                               open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG))
 
-          print("=== AppDatabase.kt ===")
-          for db in glob.glob("app/**/AppDatabase.kt", recursive=True):
-              print(f"--- {db} ---")
-              print(open(db, encoding="utf-8", errors="ignore").read())
+          print("=== AppDatabase.kt & Local Files ===")
+          for f in sorted(glob.glob("app/src/**/data/local/**/*.kt", recursive=True)):
+              print(f"--- {f} ---")
+              print(open(f, encoding="utf-8", errors="ignore").read())
           EOF
 
       - name: Setup debug.keystore & Print SHA-1
@@ -178,7 +176,7 @@ jobs:
               }
           }
           EOF
-          gradle clean assembleDebug --no-build-cache --stacktrace --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
+          gradle clean assembleDebug --no-build-cache --info --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
 
       - name: Rename APK & Generate Update Manifest
         env:
