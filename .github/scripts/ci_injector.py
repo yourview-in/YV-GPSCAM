@@ -106,10 +106,13 @@ def inject_keys_and_free_map():
                 g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
             open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-    # 2. Bypass isApiKeyConfigured() in GoogleMapsComponents.kt
+    # 2. Replace Carto raster tiles (which now return "API KEY REQUIRED carto.com/basemaps/apikey" watermarks!)
+    #    with 100% free, unwatermarked ArcGIS World Street Map & OpenStreetMap tiles across the entire codebase!
     for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
         k_txt = open(fp, encoding="utf-8", errors="ignore").read()
         orig_k = k_txt
+
+        # Bypass isApiKeyConfigured()
         k_txt = re.sub(
             r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
             r'\1\n        return true',
@@ -120,10 +123,25 @@ def inject_keys_and_free_map():
             r'\1 true',
             k_txt
         )
+
+        # Replace any Carto basemaps URLs (which watermark tiles with "API KEY REQUIRED carto.com/basemaps/apikey")
+        # with ArcGIS World Street Map (exact same z/y/x order as ArcGIS Imagery/Topo already in the app!)
+        k_txt = re.sub(
+            r'https://[a-z0-9.-]*basemaps\.cartocdn\.com/[^"\s]+/\$z/\$x/\$y[^"\s]*',
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/$z/$y/$x',
+            k_txt
+        )
+        k_txt = re.sub(
+            r'https://[a-z0-9.-]*basemaps\.cartocdn\.com/[^"\s]+/\{z\}/\{x\}/\{y\}[^"\s]*',
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+            k_txt
+        )
+
         if k_txt != orig_k:
+            print(f"Replaced Carto watermarked tile URL in {fp}")
             open(fp, "w", encoding="utf-8").write(k_txt)
 
-    # 3. Replace fetchGoogleStaticMapAndCache in OfflineMapRepository.kt to use built-in free tile fetcher
+    # 3. Route fetchGoogleStaticMapAndCache in OfflineMapRepository.kt to built-in free tile fetcher
     repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
     if os.path.exists(repo_path):
         r_txt = open(repo_path, encoding="utf-8").read()
@@ -153,7 +171,7 @@ def inject_keys_and_free_map():
         if old_fn_pattern.search(r_txt):
             r_txt = old_fn_pattern.sub(new_fn, r_txt, count=1)
             open(repo_path, "w", encoding="utf-8").write(r_txt)
-            print("Patched fetchGoogleStaticMapAndCache to use free Carto/ArcGIS/OSM tiles!")
+            print("Patched fetchGoogleStaticMapAndCache to use free ArcGIS/OSM tiles!")
 
     manifest_path = "app/src/main/AndroidManifest.xml"
     if os.path.exists(manifest_path) and maps_key != "placeholder":
