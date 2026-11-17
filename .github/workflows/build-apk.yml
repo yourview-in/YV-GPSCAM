@@ -121,7 +121,7 @@ jobs:
           fi
           keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep "SHA1:"
 
-      - name: Inject API keys & Switch Static Map to Free OSM Tile Fallback
+      - name: Inject API keys & Switch Static Map to Free OSM/Carto Tiles
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
@@ -165,12 +165,11 @@ jobs:
                       g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
                   open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-          # 2. Switch Static Map tile downloader & UI key gate to 100% free OpenStreetMap / Carto tiles (zero API key or billing needed!)
+          # 2. Bypass "API KEY REQUIRED" UI block and preserve exact variable names in Static Map URL
           for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
               k_txt = open(fp, encoding="utf-8", errors="ignore").read()
               orig_k = k_txt
 
-              # Bypass "API KEY REQUIRED" UI block in GoogleMapsComponents.kt
               k_txt = re.sub(
                   r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
                   r'\1\n        return true',
@@ -182,9 +181,44 @@ jobs:
                   k_txt
               )
 
-              # Replace Google Static Maps URL with free Carto/OSM raster tile generator (supports lat, lon, zoom without any API key)
               if "maps.googleapis.com/maps/api/staticmap" in k_txt:
-                  # Replace buildStaticMapUrl function body or URL formatter cleanly
+                  def replace_staticmap(match):
+                      full_call = match.group(0)
+                      # Extract the format arguments after the format string
+                      fmt_str_end = full_call.find('",')
+                      if fmt_str_end == -1:
+                          return full_call
+                      args_part = full_call[fmt_str_end + 2:-1].strip()
+                      # Split top-level comma arguments cleanly
+                      args = []
+                      depth = 0
+                      cur = []
+                      for ch in args_part:
+                          if ch in "([":
+                              depth += 1
+                          elif ch in ")]":
+                              depth -= 1
+                          if ch == "," and depth == 0:
+                              args.append("".join(cur).strip())
+                              cur = []
+                          else:
+                              cur.append(ch)
+                      if cur:
+                          args.append("".join(cur).strip())
+
+                      lat_expr = args[0] if len(args) > 0 else "0.0"
+                      lon_expr = args[1] if len(args) > 1 else "0.0"
+                      zoom_expr = args[2] if len(args) > 2 else "15"
+                      # mapType is typically index 5 (lat, lon, zoom, w, h, mapType, key)
+                      type_expr = args[5] if len(args) > 5 else '"roadmap"'
+                      return f"buildFreeOsmTileUrl({lat_expr}, {lon_expr}, {zoom_expr}, {type_expr})"
+
+                  k_txt = re.sub(
+                      r'String\.format\([\s\S]*?"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[\s\S]*?\)',
+                      replace_staticmap,
+                      k_txt
+                  )
+
                   helper_fn = '''
               private fun buildFreeOsmTileUrl(lat: Double, lon: Double, zoom: Int, mapType: String): String {
                   val z = zoom.coerceIn(1, 18)
@@ -199,18 +233,6 @@ jobs:
                   }
               }
           '''
-                  k_txt = re.sub(
-                      r'String\.format\(\s*Locale\.US\s*,\s*"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[^)]*\)',
-                      r'buildFreeOsmTileUrl(latitude, longitude, zoom, mapType)',
-                      k_txt
-                  )
-                  # Fallback if variable names are lat/lng instead of latitude/longitude
-                  k_txt = re.sub(
-                      r'String\.format\(\s*"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[^)]*\)',
-                      r'buildFreeOsmTileUrl(lat, lng, zoom, mapType)',
-                      k_txt
-                  )
-                  # Inject helper function right before last closing brace of class/object
                   last_brace = k_txt.rfind("}")
                   if last_brace != -1 and "buildFreeOsmTileUrl" in k_txt:
                       k_txt = k_txt[:last_brace] + helper_fn + "\n}"
