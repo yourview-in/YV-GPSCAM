@@ -57,7 +57,7 @@ jobs:
           {
             "project_info": { "project_number": "$PROJECT_NUM", "project_id": "yvgpscam-$PROJECT_NUM" },
             "client": [{
-              "client_info": { "mobilesdk_app_id": "1:$PROJECT_NUM:android:0000000000000000", "android_client_info": { "package_name": "com.aistudio.yvgpscam.k7m4xp" } },
+              "client_info": { "mobilesdk_app_id": "1:$PROJECT_NUM:android:0000000000000000", "android_client_info": { "package_name": "in.yourview.yvgpscam" } },
               "oauth_client": [{ "client_id": "$CLIENT_ID", "client_type": 3 }],
               "api_key": [{ "current_key": "$DRIVE_KEY" }]
             }],
@@ -82,7 +82,7 @@ jobs:
           tf = files.pop(0)
           src = open(tf).read()
           pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
-          pkg_line = pm.group(1).strip() if pm else "package com.aistudio.yvgpscam.k7m4xp"
+          pkg_line = pm.group(1).strip() if pm else "package in.yourview.yvgpscam"
           code = f'''{pkg_line}
           import android.app.AlertDialog
           import android.content.*

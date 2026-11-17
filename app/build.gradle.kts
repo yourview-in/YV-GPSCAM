@@ -11,11 +11,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "in.yourview.yvgpscam"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.yvgpscam.k7m4xp"
+    applicationId = "in.yourview.yvgpscam"
     minSdk = 24
     targetSdk = 36
     versionCode = 2
