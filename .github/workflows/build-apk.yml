@@ -121,7 +121,7 @@ jobs:
           fi
           keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep "SHA1:"
 
-      - name: Inject API keys & Switch Static Map to Free OSM/Carto Tiles
+      - name: Inject API keys & Route Static Maps to Built-In Free OSM/ArcGIS Tiles
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
@@ -165,11 +165,9 @@ jobs:
                       g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"WEB_CLIENT_ID"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
                   open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-          # 2. Bypass "API KEY REQUIRED" UI block and preserve exact variable names in Static Map URL
-          for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
-              k_txt = open(fp, encoding="utf-8", errors="ignore").read()
-              orig_k = k_txt
-
+          # 2. Bypass "API KEY REQUIRED" check in GoogleMapsComponents.kt
+          for fp in glob.glob("app/src/main/**/GoogleMapsComponents.kt", recursive=True):
+              k_txt = open(fp, encoding="utf-8").read()
               k_txt = re.sub(
                   r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
                   r'\1\n        return true',
@@ -180,68 +178,38 @@ jobs:
                   r'\1 true',
                   k_txt
               )
+              open(fp, "w", encoding="utf-8").write(k_txt)
+              print(f"✅ Enabled map UI without API key in {fp}")
 
-              if "maps.googleapis.com/maps/api/staticmap" in k_txt:
-                  def replace_staticmap(match):
-                      full_call = match.group(0)
-                      # Extract the format arguments after the format string
-                      fmt_str_end = full_call.find('",')
-                      if fmt_str_end == -1:
-                          return full_call
-                      args_part = full_call[fmt_str_end + 2:-1].strip()
-                      # Split top-level comma arguments cleanly
-                      args = []
-                      depth = 0
-                      cur = []
-                      for ch in args_part:
-                          if ch in "([":
-                              depth += 1
-                          elif ch in ")]":
-                              depth -= 1
-                          if ch == "," and depth == 0:
-                              args.append("".join(cur).strip())
-                              cur = []
-                          else:
-                              cur.append(ch)
-                      if cur:
-                          args.append("".join(cur).strip())
+          # 3. Update OfflineMapRepository.kt to use its own free Carto/ArcGIS tile fetcher for static map previews
+          for fp in glob.glob("app/src/main/**/OfflineMapRepository.kt", recursive=True):
+              r_txt = open(fp, encoding="utf-8").read()
+              old_fn_pattern = re.compile(
+                  r'fun\s+fetchGoogleStaticMapAndCache\s*\(\s*lat:\s*Double,\s*lon:\s*Double,\s*zoom:\s*Int,\s*outputSizePx:\s*Int,\s*mapStyle:\s*MapStyle\s*\):\s*ByteArray\?\s*\{.*?\n    \}',
+                  re.DOTALL
+              )
+              new_fn = '''fun fetchGoogleStaticMapAndCache(
+        lat: Double,
+        lon: Double,
+        zoom: Int,
+        outputSizePx: Int,
+        mapStyle: MapStyle
+    ): ByteArray? {
+        val z = zoom.coerceIn(1, 18)
+        val n = 1 shl z
+        val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
+        val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
+        val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
+        return fetchTileFromNetworkAndCache(z, x, y, mapStyle)
+    }'''
+              if old_fn_pattern.search(r_txt):
+                  r_txt = old_fn_pattern.sub(new_fn, r_txt, count=1)
+                  open(fp, "w", encoding="utf-8").write(r_txt)
+                  print(f"✅ Routed fetchGoogleStaticMapAndCache to free Carto/ArcGIS tiles in {fp}")
+              else:
+                  print(f"⚠️ Could not match fetchGoogleStaticMapAndCache signature in {fp}")
 
-                      lat_expr = args[0] if len(args) > 0 else "0.0"
-                      lon_expr = args[1] if len(args) > 1 else "0.0"
-                      zoom_expr = args[2] if len(args) > 2 else "15"
-                      # mapType is typically index 5 (lat, lon, zoom, w, h, mapType, key)
-                      type_expr = args[5] if len(args) > 5 else '"roadmap"'
-                      return f"buildFreeOsmTileUrl({lat_expr}, {lon_expr}, {zoom_expr}, {type_expr})"
-
-                  k_txt = re.sub(
-                      r'String\.format\([\s\S]*?"https://maps\.googleapis\.com/maps/api/staticmap[^"]*"[\s\S]*?\)',
-                      replace_staticmap,
-                      k_txt
-                  )
-
-                  helper_fn = '''
-              private fun buildFreeOsmTileUrl(lat: Double, lon: Double, zoom: Int, mapType: String): String {
-                  val z = zoom.coerceIn(1, 18)
-                  val n = Math.pow(2.0, z.toDouble())
-                  val x = ((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n.toInt() - 1)
-                  val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
-                  val y = ((1.0 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0 * n).toInt().coerceIn(0, n.toInt() - 1)
-                  return if (mapType.equals("satellite", ignoreCase = true) || mapType.equals("hybrid", ignoreCase = true)) {
-                      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$z/$y/$x"
-                  } else {
-                      "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y@2x.png"
-                  }
-              }
-          '''
-                  last_brace = k_txt.rfind("}")
-                  if last_brace != -1 and "buildFreeOsmTileUrl" in k_txt:
-                      k_txt = k_txt[:last_brace] + helper_fn + "\n}"
-
-              if k_txt != orig_k:
-                  print(f"✅ Updated map provider to free OSM/Carto tiles in {fp}")
-                  open(fp, "w", encoding="utf-8").write(k_txt)
-
-          # 3. Update AndroidManifest.xml meta-data
+          # 4. Update AndroidManifest.xml meta-data
           manifest_path = "app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path) and maps_key != "placeholder":
               m_txt = open(manifest_path, encoding="utf-8").read()
