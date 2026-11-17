@@ -127,6 +127,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+          cache-read-only: true
 
       - name: Build Debug APK
         run: |
@@ -143,7 +144,7 @@ jobs:
               }
           }
           EOF
-          gradle assembleDebug --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
+          gradle clean assembleDebug --no-build-cache --stacktrace --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
 
       - name: Rename APK & Generate Update Manifest
         env:
