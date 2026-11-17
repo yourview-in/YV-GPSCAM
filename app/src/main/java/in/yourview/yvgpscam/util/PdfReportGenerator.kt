@@ -1,4 +1,4 @@
-package in.yourview.yvgpscam.util
+package `in`.yourview.yvgpscam.util
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -12,9 +12,9 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.text.TextPaint
 import android.text.TextUtils
-import in.yourview.yvgpscam.camera.LogoBitmapProvider
-import in.yourview.yvgpscam.data.model.CapturedPhotoEntity
-import in.yourview.yvgpscam.data.model.GpsTelemetry
+import `in`.yourview.yvgpscam.camera.LogoBitmapProvider
+import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
+import `in`.yourview.yvgpscam.data.model.GpsTelemetry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File

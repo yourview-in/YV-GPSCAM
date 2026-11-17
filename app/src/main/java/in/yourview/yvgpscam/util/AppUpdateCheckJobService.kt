@@ -1,4 +1,4 @@
-package in.yourview.yvgpscam.util
+package `in`.yourview.yvgpscam.util
 
 import android.annotation.SuppressLint
 import android.app.job.JobParameters

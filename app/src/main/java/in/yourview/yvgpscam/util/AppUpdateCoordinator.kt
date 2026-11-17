@@ -1,4 +1,4 @@
-package in.yourview.yvgpscam.util
+package `in`.yourview.yvgpscam.util
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -19,9 +19,9 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import in.yourview.yvgpscam.BuildConfig
-import in.yourview.yvgpscam.MainActivity
-import in.yourview.yvgpscam.R
+import `in`.yourview.yvgpscam.BuildConfig
+import `in`.yourview.yvgpscam.MainActivity
+import `in`.yourview.yvgpscam.R
 import com.google.android.play.core.appupdate.AppUpdateInfo
 import com.google.android.play.core.appupdate.AppUpdateManager
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory

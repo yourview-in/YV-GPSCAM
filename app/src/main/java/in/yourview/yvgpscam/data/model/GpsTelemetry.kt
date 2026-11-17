@@ -1,4 +1,4 @@
-package in.yourview.yvgpscam.data.model
+package `in`.yourview.yvgpscam.data.model
 
 import java.text.SimpleDateFormat
 import java.util.Date
