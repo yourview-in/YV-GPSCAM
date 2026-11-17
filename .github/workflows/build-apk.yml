@@ -138,27 +138,32 @@ jobs:
           if [ "$MAPS_KEY" = "placeholder" ]; then
             echo "⚠️ WARNING: MAPS_API_KEY secret is empty or not set in GitHub Secrets!"
           else
-            echo "✅ MAPS_API_KEY loaded from GitHub Secrets."
+            echo "✅ MAPS_API_KEY loaded from GitHub Secrets (length: ${#MAPS_KEY})."
           fi
 
-          if [ "$DRIVE_KEY" = "placeholder" ]; then
-            echo "⚠️ WARNING: GOOGLE_DRIVE_API_KEY secret is empty or not set in GitHub Secrets!"
-          else
-            echo "✅ GOOGLE_DRIVE_API_KEY loaded from GitHub Secrets."
-          fi
-
-          # Write keys to local.properties and secrets.properties
+          # Write to local.properties and secrets.properties
           printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> local.properties
           printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" > secrets.properties
 
-          # Also inject MAPS_API_KEY directly into AndroidManifest.xml and strings.xml if placeholders exist
-          MAPS_KEY="$MAPS_KEY" DRIVE_KEY="$DRIVE_KEY" python3 - << 'EOF'
-          import os, re
+          # Also pass into gradle.properties so BuildConfig / Gradle property lookups always find it
+          printf "\nGOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> gradle.properties
+
+          MAPS_KEY="$MAPS_KEY" DRIVE_KEY="$DRIVE_KEY" GEMINI_KEY="$GEMINI_KEY" python3 - << 'EOF'
+          import os, re, glob
 
           maps_key = os.environ["MAPS_KEY"]
           drive_key = os.environ["DRIVE_KEY"]
+          gemini_key = os.environ["GEMINI_KEY"]
 
-          # 1. Update AndroidManifest.xml meta-data for com.google.android.geo.API_KEY
+          # 1. Inspect how the app reads MAPS_API_KEY in Kotlin & Gradle files
+          print("=== Scanning how app reads API keys ===")
+          for fp in glob.glob("app/**/*.kt", recursive=True) + glob.glob("app/**/*.kts", recursive=True) + glob.glob("app/**/*.gradle", recursive=True):
+              txt = open(fp, encoding="utf-8", errors="ignore").read()
+              for line in txt.splitlines():
+                  if any(k in line for k in ("MAPS_API_KEY", "GOOGLE_MAPS", "API KEY REQUIRED", "staticmap", "DRIVE_API_KEY", "GEMINI_API_KEY")):
+                      print(f"  {fp}: {line.strip()[:140]}")
+
+          # 2. Update AndroidManifest.xml meta-data
           manifest_path = "app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path):
               m_txt = open(manifest_path, encoding="utf-8").read()
@@ -176,7 +181,7 @@ jobs:
                   )
               open(manifest_path, "w", encoding="utf-8").write(m_txt)
 
-          # 2. Update any string resources in app/src/main/res/values/*.xml
+          # 3. Replace any placeholder/empty string resources in res/values/*.xml
           res_dir = "app/src/main/res/values"
           if os.path.isdir(res_dir):
               for fn in os.listdir(res_dir):
@@ -184,7 +189,7 @@ jobs:
                       fp = os.path.join(res_dir, fn)
                       r_txt = open(fp, encoding="utf-8").read()
                       new_txt = re.sub(
-                          r'(<string\s+name="(?:google_maps_key|maps_api_key|MAPS_API_KEY)"[^>]*>)[^<]*(</string>)',
+                          r'(<string\s+name="(?:google_maps_key|maps_api_key|MAPS_API_KEY|google_api_key)"[^>]*>)[^<]*(</string>)',
                           rf'\g<1>{maps_key}\g<2>',
                           r_txt
                       )
@@ -195,6 +200,19 @@ jobs:
                       )
                       if new_txt != r_txt:
                           open(fp, "w", encoding="utf-8").write(new_txt)
+
+          # 4. If Kotlin code has hardcoded placeholder constants for MAPS_API_KEY / API_KEY, inject the secret directly
+          if maps_key != "placeholder":
+              for fp in glob.glob("app/src/**/*.kt", recursive=True):
+                  k_txt = open(fp, encoding="utf-8", errors="ignore").read()
+                  new_k = re.sub(
+                      r'((?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)\s*=\s*")[^"]*(")',
+                      rf'\g<1>{maps_key}\g<2>',
+                      k_txt
+                  )
+                  if new_k != k_txt:
+                      print(f"Injected MAPS_API_KEY into Kotlin constant in {fp}")
+                      open(fp, "w", encoding="utf-8").write(new_k)
           EOF
 
           cat << EOF > app/google-services.json
