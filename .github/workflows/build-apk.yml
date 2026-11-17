@@ -32,17 +32,24 @@ jobs:
           all_kt = glob.glob("app/src/**/*.kt", recursive=True)
           all_java = glob.glob("app/src/**/*.java", recursive=True)
 
-          # 1. Detect any leftover non-in.yourview.yvgpscam package roots
+          # 1. Detect only genuine old app package roots (never touch third-party libraries like okhttp3, retrofit2, etc.)
+          THIRD_PARTY_PREFIXES = (
+              NEW_PKG_RAW, "android", "androidx", "com.google", "com.android", "com.squareup",
+              "okhttp3", "okio", "retrofit2", "kotlin", "kotlinx", "java", "javax",
+              "org", "io", "dagger", "hilt", "net", "coil", "bumptech", "glide"
+          )
+
           old_pkgs = set()
           for path in all_kt + all_java:
               txt = open(path, encoding="utf-8", errors="ignore").read()
-              for m in re.finditer(r'^\s*(?:package|import)\s+([`a-zA-Z0-9_.]+)', txt, re.M):
-                  ref = m.group(1).replace("`", "")
-                  if not ref.startswith((NEW_PKG_RAW, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
+              m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+              if m_pkg:
+                  ref = m_pkg.group(1).replace("`", "")
+                  if not ref.startswith(THIRD_PARTY_PREFIXES):
                       old_pkgs.add(".".join(ref.split(".")[:3]))
 
           for old in old_pkgs:
-              print(f"Replacing old package '{old}' -> '{NEW_PKG_RAW}'")
+              print(f"Replacing old app package '{old}' -> '{NEW_PKG_RAW}'")
               for root, _, files in os.walk("app"):
                   for f in files:
                       if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
@@ -66,8 +73,6 @@ jobs:
               pkg = m_pkg.group(1) if m_pkg else NEW_PKG_KT
               for m_cls in re.finditer(r'\b(?:class|interface|object|enum\s+class|annotation\s+class|data\s+class|sealed\s+class)\s+([A-Za-z0-9_]+)', txt):
                   class_to_pkg[m_cls.group(1)] = pkg
-
-          print("Indexed Room-related classes:", {k: v for k, v in class_to_pkg.items() if any(x in k for x in ("Entity", "Dao", "Database", "Converter"))})
 
           # 4. Fix moved subpackage imports & add missing imports across all Kotlin files
           for path in all_kt:
@@ -100,8 +105,6 @@ jobs:
                                       lines.insert(idx + 1, imp_stmt)
                                       changed = True
                                       break
-                      else:
-                          print(f"WARNING: {target} was NOT found anywhere in app/src!")
 
               if changed:
                   open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
