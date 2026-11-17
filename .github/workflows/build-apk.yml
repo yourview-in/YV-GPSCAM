@@ -21,77 +21,87 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Auto-Fix Missing Imports & Package Names
+      - name: Auto-Fix Kotlin Backticks, Old Packages & Room Imports
         run: |
           python3 - << 'EOF'
           import os, re, glob
 
-          NEW_PKG = "in.yourview.yvgpscam"
+          NEW_PKG_RAW = "in.yourview.yvgpscam"
+          NEW_PKG_KT = "`in`.yourview.yvgpscam"
+
+          all_kt = glob.glob("app/src/**/*.kt", recursive=True)
+          all_java = glob.glob("app/src/**/*.java", recursive=True)
+
+          # 1. Detect any leftover non-in.yourview.yvgpscam package roots
           old_pkgs = set()
-
-          # 1. Build a map of all defined classes/interfaces/objects in the project
-          class_to_pkg = {}
-          all_kt_java = glob.glob("app/src/**/*.kt", recursive=True) + glob.glob("app/src/**/*.java", recursive=True)
-
-          for path in all_kt_java:
+          for path in all_kt + all_java:
               txt = open(path, encoding="utf-8", errors="ignore").read()
-              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
-              pkg = m_pkg.group(1) if m_pkg else NEW_PKG
-              if not pkg.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
-                  old_pkgs.add(".".join(pkg.split(".")[:3]))
-              for m_imp in re.finditer(r'^\s*import\s+([a-zA-Z0-9_.]+)', txt, re.M):
-                  ref = m_imp.group(1)
-                  if not ref.startswith((NEW_PKG, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
+              for m in re.finditer(r'^\s*(?:package|import)\s+([`a-zA-Z0-9_.]+)', txt, re.M):
+                  ref = m.group(1).replace("`", "")
+                  if not ref.startswith((NEW_PKG_RAW, "android", "androidx", "com.google", "kotlin", "kotlinx", "java", "javax", "org", "io", "dagger", "hilt")):
                       old_pkgs.add(".".join(ref.split(".")[:3]))
 
-          # 2. Replace leftover old package prefixes
           for old in old_pkgs:
-              print(f"Replacing old package '{old}' -> '{NEW_PKG}'")
+              print(f"Replacing old package '{old}' -> '{NEW_PKG_RAW}'")
               for root, _, files in os.walk("app"):
                   for f in files:
                       if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
                           fp = os.path.join(root, f)
                           content = open(fp, encoding="utf-8", errors="ignore").read()
                           if old in content:
-                              open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG))
+                              open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG_RAW))
 
-          # 3. Re-index all defined types across the project after package cleanup
-          for path in all_kt_java:
+          # 2. Ensure `in` is always escaped with backticks in Kotlin package/import lines
+          for path in all_kt:
               txt = open(path, encoding="utf-8", errors="ignore").read()
-              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
-              pkg = m_pkg.group(1) if m_pkg else NEW_PKG
+              fixed = re.sub(r'(^\s*(?:package|import)\s+)in\.yourview\.yvgpscam', r'\1`in`.yourview.yvgpscam', txt, flags=re.M)
+              if fixed != txt:
+                  open(path, "w", encoding="utf-8").write(fixed)
+
+          # 3. Map every class/interface/object to its actual Kotlin package (with backticks)
+          class_to_pkg = {}
+          for path in all_kt:
+              txt = open(path, encoding="utf-8", errors="ignore").read()
+              m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+              pkg = m_pkg.group(1) if m_pkg else NEW_PKG_KT
               for m_cls in re.finditer(r'\b(?:class|interface|object|enum\s+class|annotation\s+class|data\s+class|sealed\s+class)\s+([A-Za-z0-9_]+)', txt):
                   class_to_pkg[m_cls.group(1)] = pkg
 
-          # 4. Fix broken imports in all files (especially AppDatabase.kt) where class moved subpackages
-          for path in all_kt_java:
+          print("Indexed Room-related classes:", {k: v for k, v in class_to_pkg.items() if any(x in k for x in ("Entity", "Dao", "Database", "Converter"))})
+
+          # 4. Fix moved subpackage imports & add missing imports across all Kotlin files
+          for path in all_kt:
               txt = open(path, encoding="utf-8", errors="ignore").read()
               lines = txt.splitlines()
               changed = False
-              m_pkg = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
-              cur_pkg = m_pkg.group(1) if m_pkg else NEW_PKG
+              m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+              cur_pkg = m_pkg.group(1) if m_pkg else NEW_PKG_KT
 
               for i, line in enumerate(lines):
-                  m_imp = re.match(r'^(\s*import\s+)([a-zA-Z0-9_.]+)\.([A-Z][A-Za-z0-9_]*)(.*)$', line)
+                  m_imp = re.match(r'^(\s*import\s+)([`a-zA-Z0-9_.]+)\.([A-Z][A-Za-z0-9_]*)(.*)$', line)
                   if m_imp:
                       prefix, imp_pkg, cls_name, suffix = m_imp.groups()
-                      if imp_pkg.startswith(NEW_PKG) and cls_name in class_to_pkg:
+                      if imp_pkg.replace("`", "").startswith(NEW_PKG_RAW) and cls_name in class_to_pkg:
                           real_pkg = class_to_pkg[cls_name]
                           if real_pkg != imp_pkg:
-                              print(f"Fixing moved import in {path}: {imp_pkg}.{cls_name} -> {real_pkg}.{cls_name}")
+                              print(f"Fixing import in {path}: {imp_pkg}.{cls_name} -> {real_pkg}.{cls_name}")
                               lines[i] = f"{prefix}{real_pkg}.{cls_name}{suffix}"
                               changed = True
 
-              # Auto-add missing imports for types referenced in AppDatabase.kt
               if path.endswith("AppDatabase.kt"):
-                  for cls_name, real_pkg in class_to_pkg.items():
-                      if real_pkg != cur_pkg and re.search(rf'\b{cls_name}\b', txt) and f".{cls_name}" not in txt:
-                          print(f"Adding missing import in AppDatabase.kt: import {real_pkg}.{cls_name}")
-                          for idx, l in enumerate(lines):
-                              if l.startswith("package "):
-                                  lines.insert(idx + 1, f"import {real_pkg}.{cls_name}")
-                                  changed = True
-                                  break
+                  for target in ["CapturedPhotoEntity", "OfflineRegionEntity", "CapturedPhotoDao", "OfflineRegionDao"]:
+                      if target in class_to_pkg:
+                          real_pkg = class_to_pkg[target]
+                          imp_stmt = f"import {real_pkg}.{target}"
+                          if real_pkg != cur_pkg and imp_stmt not in "\n".join(lines):
+                              print(f"Adding missing import to AppDatabase.kt: {imp_stmt}")
+                              for idx, l in enumerate(lines):
+                                  if l.startswith("package "):
+                                      lines.insert(idx + 1, imp_stmt)
+                                      changed = True
+                                      break
+                      else:
+                          print(f"WARNING: {target} was NOT found anywhere in app/src!")
 
               if changed:
                   open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
@@ -158,7 +168,7 @@ jobs:
           tf = files.pop(0)
           src = open(tf).read()
           pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
-          pkg_line = pm.group(1).strip() if pm else "package in.yourview.yvgpscam"
+          pkg_line = pm.group(1).strip() if pm else "package `in`.yourview.yvgpscam"
           code = f'''{pkg_line}
           import android.app.AlertDialog
           import android.content.*
@@ -220,7 +230,7 @@ jobs:
               }
           }
           EOF
-          gradle clean assembleDebug --no-build-cache --info --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
+          gradle clean assembleDebug --no-build-cache --no-configuration-cache --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
 
       - name: Rename APK & Generate Update Manifest
         env:
