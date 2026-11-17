@@ -25,7 +25,6 @@ def fix_packages_and_imports():
                 old_pkgs.add(".".join(ref.split(".")[:3]))
 
     for old in old_pkgs:
-        print(f"Replacing old app package '{old}' -> '{NEW_PKG_RAW}'")
         for root, _, files in os.walk("app"):
             for f in files:
                 if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
@@ -81,136 +80,127 @@ def fix_packages_and_imports():
             open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
 
-def inject_keys_and_free_map():
-    maps_key = os.environ.get("MAPS_API_KEY") or "placeholder"
-    drive_key = os.environ.get("GOOGLE_DRIVE_API_KEY") or "placeholder"
-    gemini_key = os.environ.get("GEMINI_API_KEY") or "placeholder"
+def inject_keys_and_google_maps():
+    maps_key = (os.environ.get("MAPS_API_KEY") or "placeholder").strip()
+    drive_key = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "placeholder").strip()
+    gemini_key = (os.environ.get("GEMINI_API_KEY") or "placeholder").strip()
     client_id = (os.environ.get("WEB_CLIENT_ID") or "://googleusercontent.com").strip()
 
-    if client_id == "://googleusercontent.com" or not client_id:
-        print("⚠️ WARNING: WEB_CLIENT_ID secret is empty! Google Sign-In / Drive auth requires WEB_CLIENT_ID.")
+    if maps_key and maps_key != "placeholder":
+        print(f"MAPS_API_KEY loaded (length: {len(maps_key)}). Configuring official Google Maps!")
     else:
-        print(f"✅ WEB_CLIENT_ID loaded from GitHub Secrets (ends with: ...{client_id[-28:]}).")
+        print("WARNING: MAPS_API_KEY is empty!")
+
+    if client_id == "://googleusercontent.com" or not client_id:
+        print("WARNING: WEB_CLIENT_ID secret is empty!")
+    else:
+        print(f"WEB_CLIENT_ID loaded (length: {len(client_id)}).")
 
     # 1. Inject real API keys and WEB_CLIENT_ID into build.gradle.kts / build.gradle
     for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
         if os.path.exists(gradle_file):
             g_txt = open(gradle_file, encoding="utf-8").read()
-            if maps_key != "placeholder":
+            if maps_key and maps_key != "placeholder":
                 g_txt = g_txt.replace("MY_MAPS_API_KEY", maps_key)
-                g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{maps_key}\\""\g<2>', g_txt)
-                g_txt = re.sub(r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^\r\n]+', rf'\g<1>"{maps_key}"', g_txt)
-            if drive_key != "placeholder":
+                g_txt = re.sub(
+                    r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))',
+                    rf'\g<1>"\\"{maps_key}\\""\g<2>',
+                    g_txt
+                )
+                g_txt = re.sub(
+                    r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^\r\n]+',
+                    rf'\g<1>"{maps_key}"',
+                    g_txt
+                )
+            if drive_key and drive_key != "placeholder":
                 g_txt = g_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
-                g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{drive_key}\\""\g<2>', g_txt)
-            if gemini_key != "placeholder":
+                g_txt = re.sub(
+                    r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))',
+                    rf'\g<1>"\\"{drive_key}\\""\g<2>',
+                    g_txt
+                )
+            if gemini_key and gemini_key != "placeholder":
                 g_txt = g_txt.replace("MY_GEMINI_API_KEY", gemini_key)
-                g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{gemini_key}\\""\g<2>', g_txt)
+                g_txt = re.sub(
+                    r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))',
+                    rf'\g<1>"\\"{gemini_key}\\""\g<2>',
+                    g_txt
+                )
             if "googleusercontent.com" in client_id and not client_id.startswith("://"):
                 g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
-                g_txt = re.sub(r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))', rf'\g<1>"\\"{client_id}\\""\g<2>', g_txt)
+                g_txt = re.sub(
+                    r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))',
+                    rf'\g<1>"\\"{client_id}\\""\g<2>',
+                    g_txt
+                )
             open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-    # 2. Replace WEB_CLIENT_ID placeholders and Carto watermarked tile URLs in all Kotlin files & res/values/*.xml
-    for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
-        k_txt = open(fp, encoding="utf-8", errors="ignore").read()
-        orig_k = k_txt
+    # 2. Inject MAPS_API_KEY directly into GoogleMapsComponents.kt & OfflineMapRepository.kt
+    if maps_key and maps_key != "placeholder":
+        for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
+            k_txt = open(fp, encoding="utf-8", errors="ignore").read()
+            orig_k = k_txt
+            k_txt = k_txt.replace("MY_MAPS_API_KEY", maps_key)
+            k_txt = k_txt.replace("BuildConfig.MAPS_API_KEY", f'"{maps_key}"')
+            if k_txt != orig_k:
+                print(f"Injected Google Maps API key into {fp}")
+                open(fp, "w", encoding="utf-8").write(k_txt)
 
-        # Bypass isApiKeyConfigured()
-        k_txt = re.sub(
-            r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{)',
-            r'\1\n        return true',
-            k_txt
-        )
-        k_txt = re.sub(
-            r'(fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*=)[^\r\n]+',
-            r'\1 true',
-            k_txt
-        )
+        manifest_path = "app/src/main/AndroidManifest.xml"
+        if os.path.exists(manifest_path):
+            m_txt = open(manifest_path, encoding="utf-8").read()
+            m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
+            m_txt = m_txt.replace("${MAPS_API_KEY}", maps_key)
+            open(manifest_path, "w", encoding="utf-8").write(m_txt)
 
-        # Inject WEB_CLIENT_ID if Kotlin files hardcode a placeholder client ID
-        if "googleusercontent.com" in client_id and not client_id.startswith("://"):
-            k_txt = k_txt.replace("MY_WEB_CLIENT_ID", client_id)
-            k_txt = re.sub(r'((?:WEB_CLIENT_ID|SERVER_CLIENT_ID|GOOGLE_CLIENT_ID)\s*=\s*")[^"]*(")', rf'\g<1>{client_id}\g<2>', k_txt)
-
-        # Replace Carto watermarked URLs with free ArcGIS World Street Map tiles
-        k_txt = k_txt.replace(
-            "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y.png",
-            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/$z/$y/$x"
-        )
-        k_txt = k_txt.replace(
-            "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y@2x.png",
-            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/$z/$y/$x"
-        )
-        k_txt = re.sub(
-            r'https://basemaps\.cartocdn\.com/[^"\s]+',
-            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/$z/$y/$x",
-            k_txt
-        )
-
-        if k_txt != orig_k:
-            open(fp, "w", encoding="utf-8").write(k_txt)
-
-    # Also update default_web_client_id / web_client_id in res/values/*.xml if present
-    res_dir = "app/src/main/res/values"
-    if os.path.isdir(res_dir) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
-        for fn in os.listdir(res_dir):
-            if fn.endswith(".xml"):
-                fp = os.path.join(res_dir, fn)
-                r_txt = open(fp, encoding="utf-8").read()
-                new_txt = re.sub(
-                    r'(<string\s+name="(?:default_web_client_id|web_client_id|google_web_client_id|server_client_id)"[^>]*>)[^<]*(</string>)',
-                    rf'\g<1>{client_id}\g<2>',
-                    r_txt
-                )
-                if new_txt != r_txt:
-                    open(fp, "w", encoding="utf-8").write(new_txt)
-
-    # Print Drive / Google Sign-In setup lines for quick diagnostics
-    print("=== Scanning Google Sign-In & Drive Auth Config ===")
-    for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
-        txt = open(fp, encoding="utf-8", errors="ignore").read()
-        for line in txt.splitlines():
-            if any(k in line for k in ("GoogleSignInOptions", "requestServerAuthCode", "requestIdToken", "WEB_CLIENT_ID", "DriveScopes", "GoogleAuthUtil", "CredentialManager")):
-                print(f"  {fp}: {line.strip()[:140]}")
-
-    # 3. Replace fetchGoogleStaticMapAndCache in OfflineMapRepository.kt to use built-in free tile fetcher
+    # 3. Attach Android Package + SHA-1 headers to Google Static Maps HTTP requests
     repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
     if os.path.exists(repo_path):
         r_txt = open(repo_path, encoding="utf-8").read()
-        old_fn_pattern = re.compile(
-            r'fun\s+fetchGoogleStaticMapAndCache\s*\([^)]*\)\s*:\s*ByteArray\?\s*\{.*?(?=\n\s*fun\s+fetchHybridOverlayTile)',
-            re.DOTALL
-        )
-        new_fn = '''fun fetchGoogleStaticMapAndCache(
-        lat: Double,
-        lon: Double,
-        zoom: Int,
-        outputSizePx: Int,
-        mapStyle: MapStyle
-    ): ByteArray? {
-        val z = zoom.coerceIn(1, 18)
-        val n = 2.0.pow(z.toDouble())
-        val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n.toInt() - 1)
-        val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
-        val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n.toInt() - 1)
-        if (hasCachedTile(z, x, y, mapStyle)) {
-            return runCatching { getTileFile(z, x, y, mapStyle).readBytes() }.getOrNull()
+        if "X-Android-Package" not in r_txt and '.header("User-Agent"' in r_txt:
+            helper_snippet = """val androidCertSha1 = runCatching {
+            val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners?.firstOrNull()
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
+            }
+            if (sig != null) {
+                java.security.MessageDigest.getInstance("SHA-1").digest(sig.toByteArray()).joinToString("") { "%02X".format(it) }
+            } else ""
+        }.getOrDefault("")
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
+        if (url.contains("googleapis.com")) {
+            reqBuilder.header("X-Android-Package", context.packageName)
+            if (androidCertSha1.isNotEmpty()) {
+                reqBuilder.header("X-Android-Cert", androidCertSha1)
+            }
         }
-        return fetchTileFromNetworkAndCache(z, x, y, mapStyle)
-    }
+        val request = reqBuilder.build()"""
+            old_req = """val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
+            .build()"""
+            if old_req in r_txt:
+                r_txt = r_txt.replace(old_req, helper_snippet, 1)
+                open(repo_path, "w", encoding="utf-8").write(r_txt)
+                print("Added X-Android-Package and X-Android-Cert headers for Google Static Maps API!")
 
-    '''
-        if old_fn_pattern.search(r_txt):
-            r_txt = old_fn_pattern.sub(new_fn, r_txt, count=1)
-            open(repo_path, "w", encoding="utf-8").write(r_txt)
-            print("Patched fetchGoogleStaticMapAndCache to use free ArcGIS/OSM tiles!")
-
-    manifest_path = "app/src/main/AndroidManifest.xml"
-    if os.path.exists(manifest_path) and maps_key != "placeholder":
-        m_txt = open(manifest_path, encoding="utf-8").read()
-        m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
-        open(manifest_path, "w", encoding="utf-8").write(m_txt)
+    # 4. Patch GoogleDriveAuthHelper.kt with direct WEB_CLIENT_ID fallback
+    auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
+    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
+        a_txt = open(auth_helper_path, encoding="utf-8").read()
+        a_txt = a_txt.replace(
+            'val clientId = runCatching { context.getString(R.string.default_web_client_id) }.getOrNull()\n            ?: return null',
+            f'val clientId = runCatching {{ context.getString(R.string.default_web_client_id) }}.getOrNull()?.takeIf {{ it.endsWith(".apps.googleusercontent.com") }} ?: "{client_id}"'
+        )
+        a_txt = a_txt.replace(
+            'val clientId = runCatching { activity.getString(R.string.default_web_client_id) }.getOrNull()\n            ?: return Result.failure(IllegalStateException("Google Sign-In configuration missing (default_web_client_id)."))',
+            f'val clientId = runCatching {{ activity.getString(R.string.default_web_client_id) }}.getOrNull()?.takeIf {{ it.endsWith(".apps.googleusercontent.com") }} ?: "{client_id}"'
+        )
+        open(auth_helper_path, "w", encoding="utf-8").write(a_txt)
 
 
 def inject_auto_updater():
@@ -231,7 +221,7 @@ def inject_auto_updater():
     src = open(tf, encoding="utf-8").read()
     pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
     pkg_line = pm.group(1).strip() if pm else "package `in`.yourview.yvgpscam"
-    code = f'''{pkg_line}
+    code = f"""{pkg_line}
 import android.app.AlertDialog
 import android.content.*
 import android.net.Uri
@@ -256,7 +246,7 @@ object AutoAppUpdater {{
                 if (lc > cc) Handler(Looper.getMainLooper()).post {{
                     try {{
                         AlertDialog.Builder(ctx).setTitle("Update Available (v$ln)")
-                            .setMessage("What's New:\\n$notes\\n\\nTap Update Now to install.")
+                            .setMessage("What's New:\n$notes\n\nTap Update Now to install.")
                             .setPositiveButton("Update Now") {{ _, _ -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk))) }}
                             .setNegativeButton("Later", null).show()
                     }} catch (_: Exception) {{}}
@@ -265,17 +255,16 @@ object AutoAppUpdater {{
         }}
     }}
 }}
-'''
+"""
     open(os.path.join(os.path.dirname(tf), "AutoAppUpdater.kt"), "w", encoding="utf-8").write(code)
     if "AutoAppUpdater.checkForUpdate" not in src:
         rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
         s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
         if n > 0:
             open(tf, "w", encoding="utf-8").write(s2)
-            print("Injected AutoAppUpdater into", tf)
 
 
 if __name__ == "__main__":
     fix_packages_and_imports()
-    inject_keys_and_free_map()
+    inject_keys_and_google_maps()
     inject_auto_updater()
