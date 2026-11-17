@@ -21,6 +21,40 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Auto-Fix Old Package Names & Inspect AppDatabase
+        run: |
+          python3 - << 'EOF'
+          import os, re, glob
+
+          NEW_PKG = "in.yourview.yvgpscam"
+          old_pkgs = set()
+
+          for path in glob.glob("app/src/**/*.*", recursive=True):
+              if path.endswith((".kt", ".java")):
+                  txt = open(path, encoding="utf-8", errors="ignore").read()
+                  m = re.search(r'^\s*package\s+([a-zA-Z0-9_.]+)', txt, re.M)
+                  if m:
+                      pkg = m.group(1)
+                      if not pkg.startswith(NEW_PKG) and not pkg.startswith(("android", "androidx", "com.google", "kotlin", "java")):
+                          base = ".".join(pkg.split(".")[:3])
+                          old_pkgs.add(base)
+
+          for old in old_pkgs:
+              print(f"Replacing old package '{old}' -> '{NEW_PKG}'")
+              for root, _, files in os.walk("app"):
+                  for f in files:
+                      if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
+                          fp = os.path.join(root, f)
+                          content = open(fp, encoding="utf-8", errors="ignore").read()
+                          if old in content:
+                              open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG))
+
+          print("=== AppDatabase.kt ===")
+          for db in glob.glob("app/**/AppDatabase.kt", recursive=True):
+              print(f"--- {db} ---")
+              print(open(db, encoding="utf-8", errors="ignore").read())
+          EOF
+
       - name: Setup debug.keystore & Print SHA-1
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -92,7 +126,7 @@ jobs:
           import java.net.*
           import kotlin.concurrent.thread
           object AutoAppUpdater {{
-              private const val URL_STR = "https://github.com{repo}/releases/latest/download/update-manifest.json"
+              private const val URL_STR = "https://github.com/{repo}/releases/latest/download/update-manifest.json"
               private var done = false
               @JvmStatic fun checkForUpdate(ctx: Context) {{
                   if (done) return; done = true
@@ -120,7 +154,7 @@ jobs:
           if "AutoAppUpdater.checkForUpdate" not in src:
               rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
               s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
-              if n > 0: open(tf, "w").write(s2); print("✅ Injected AutoAppUpdater into", tf)
+              if n > 0: open(tf, "w").write(s2); print("Injected AutoAppUpdater into", tf)
           EOF
 
       - name: Setup Gradle
@@ -159,7 +193,7 @@ jobs:
           RELEASE_NOTES=$(git log -1 --pretty=%s || echo "Automated APK build")
           VER_CODE="$BUILD_NUM" VER_NAME="$VER_NAME" APK_FILE="$APK_NAME" REPO="$REPO" RELEASE_NOTES="$RELEASE_NOTES" python3 -c '
           import json, os
-          m = {"versionCode": int(os.environ["VER_CODE"]), "versionName": os.environ["VER_NAME"], "tag": "v" + os.environ["VER_NAME"], "title": "YVGPSCAM v" + os.environ["VER_NAME"], "notes": os.environ["RELEASE_NOTES"], "apkUrl": "https://github.com" + os.environ["REPO"] + "/releases/download/v" + os.environ["VER_NAME"] + "/" + os.environ["APK_FILE"], "releaseUrl": "https://github.com" + os.environ["REPO"] + "/releases/tag/v" + os.environ["VER_NAME"]}
+          m = {"versionCode": int(os.environ["VER_CODE"]), "versionName": os.environ["VER_NAME"], "tag": "v" + os.environ["VER_NAME"], "title": "YVGPSCAM v" + os.environ["VER_NAME"], "notes": os.environ["RELEASE_NOTES"], "apkUrl": "https://github.com/" + os.environ["REPO"] + "/releases/download/v" + os.environ["VER_NAME"] + "/" + os.environ["APK_FILE"], "releaseUrl": "https://github.com/" + os.environ["REPO"] + "/releases/tag/v" + os.environ["VER_NAME"]}
           open("release-apk/update-manifest.json", "w").write(json.dumps(m, indent=2))
           '
 
