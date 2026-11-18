@@ -234,6 +234,8 @@ data class StampConfig(
     }
 
     companion object {
+        const val FIXED_BRAND_NAME = "YVGPSCAM"
+
         fun serializeFnFieldOrder(order: List<FileNameField>): String {
             val clean = order.distinct()
             val missing = FileNameField.entries.filterNot { clean.contains(it) }

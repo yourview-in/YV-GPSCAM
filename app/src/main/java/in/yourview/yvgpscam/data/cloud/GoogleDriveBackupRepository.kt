@@ -146,6 +146,46 @@ class GoogleDriveBackupRepository(
         }
     }
 
+    suspend fun uploadLocationMetadataLog(
+        accessToken: String,
+        jsonPayload: String,
+        fileName: String = "YVGPSCAM_LocationMetadata_${System.currentTimeMillis()}.json"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val folderId = findOrCreateBackupFolder(accessToken)
+            val safeName = if (fileName.endsWith(".json", ignoreCase = true)) fileName else "$fileName.json"
+            val appProps = JSONObject().apply {
+                put("kind", "location_metadata_sync")
+                put("brand", "YVGPSCAM")
+                put("ts", System.currentTimeMillis().toString())
+            }
+            val metadataJson = JSONObject().apply {
+                put("name", safeName)
+                put("parents", JSONArray().put(folderId))
+                put("mimeType", "application/json")
+                put("appProperties", appProps)
+            }
+
+            val multipartBody = MultipartBody.Builder()
+                .setType(MULTIPART_RELATED_MEDIA_TYPE)
+                .addPart(metadataJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .addPart(jsonPayload.toByteArray(Charsets.UTF_8).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            val req = Request.Builder()
+                .url("$DRIVE_UPLOAD_URL?uploadType=multipart&fields=id")
+                .header("Authorization", "Bearer $accessToken")
+                .post(multipartBody)
+                .build()
+
+            httpClient.newCall(req).execute().use { resp ->
+                val bodyStr = resp.body?.string().orEmpty()
+                checkAuthAndSuccess(resp.code, bodyStr, "upload location metadata to Google Drive")
+                JSONObject(bodyStr).getString("id")
+            }
+        }
+    }
+
     suspend fun downloadPhotoBytes(
         accessToken: String,
         driveFileId: String

@@ -843,7 +843,7 @@ private fun BatchRenameTemplateDialog(
     onDismiss: () -> Unit,
     onConfirmRename: (String) -> Unit
 ) {
-    var templateText by remember { mutableStateOf("YV_{date}_{coords}_{index}") }
+    var templateText by remember { mutableStateOf("YVGPSCAM_{date}_{coords}_{index}") }
     val samplePreview = remember(templateText, selectedPhotos) {
         previewFormatter(selectedPhotos.first(), templateText)
     }
@@ -866,7 +866,7 @@ private fun BatchRenameTemplateDialog(
                 OutlinedTextField(
                     value = templateText,
                     onValueChange = { templateText = it },
-                    label = { Text("Naming Template") },
+                    label = { Text("Naming Template (YVGPSCAM fixed)") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()

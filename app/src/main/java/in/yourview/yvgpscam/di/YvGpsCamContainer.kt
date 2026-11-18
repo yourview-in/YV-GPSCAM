@@ -7,6 +7,7 @@ import `in`.yourview.yvgpscam.data.cloud.CloudMediaGateway
 import `in`.yourview.yvgpscam.data.cloud.GoogleDriveAccountStore
 import `in`.yourview.yvgpscam.data.cloud.GoogleDriveAutoSyncCoordinator
 import `in`.yourview.yvgpscam.data.cloud.GoogleDriveBackupRepository
+import `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore
 import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.local.AppDatabase
 import `in`.yourview.yvgpscam.data.local.PhotoRepository
@@ -29,6 +30,14 @@ class YvGpsCamContainer(context: Context) {
             .build()
     }
 
+    val tileHttpClient: OkHttpClient by lazy {
+        OfflineMapRepository.defaultFastTileClient()
+    }
+
+    val networkConnectivityObserver: NetworkConnectivityObserver by lazy {
+        NetworkConnectivityObserver(appContext).apply { startObserving() }
+    }
+
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
     val stampPreferencesRepository: StampPreferencesRepository by lazy {
         StampPreferencesRepository(appContext)
@@ -37,13 +46,25 @@ class YvGpsCamContainer(context: Context) {
         PhotoRepository(appContext, database.capturedPhotoDao())
     }
     val offlineMapRepository: OfflineMapRepository by lazy {
-        OfflineMapRepository(appContext, database.offlineRegionDao(), httpClient)
+        OfflineMapRepository(
+            context = appContext,
+            regionDao = database.offlineRegionDao(),
+            httpClient = tileHttpClient,
+            isNetworkOnline = { networkConnectivityObserver.isOnline.value }
+        )
     }
     val miniMapTileRenderer: MiniMapTileRenderer by lazy {
         MiniMapTileRenderer(offlineMapRepository)
     }
+    val locationMetadataSyncStore: LocationMetadataSyncStore by lazy {
+        LocationMetadataSyncStore.getInstance(appContext)
+    }
     val locationTelemetryManager: LocationTelemetryManager by lazy {
-        LocationTelemetryManager(appContext)
+        LocationTelemetryManager(
+            context = appContext,
+            isNetworkOnline = { networkConnectivityObserver.isOnline.value },
+            syncStore = locationMetadataSyncStore
+        )
     }
     val photoStampRenderer: PhotoStampRenderer by lazy {
         PhotoStampRenderer(appContext)
@@ -56,9 +77,6 @@ class YvGpsCamContainer(context: Context) {
     }
     val googleDriveBackupRepository: GoogleDriveBackupRepository by lazy {
         GoogleDriveBackupRepository(httpClient)
-    }
-    val networkConnectivityObserver: NetworkConnectivityObserver by lazy {
-        NetworkConnectivityObserver(appContext)
     }
     val cloudMediaGateway: CloudMediaGateway by lazy {
         CloudMediaGateway(appContext)

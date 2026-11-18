@@ -37,6 +37,24 @@ interface CapturedPhotoDao {
     @Query("UPDATE captured_photos SET displayName = :newName WHERE id = :id")
     suspend fun updatePhotoDisplayName(id: Long, newName: String)
 
+    @Query("SELECT * FROM captured_photos ORDER BY capturedAtMillis DESC")
+    suspend fun getAllPhotosSnapshot(): List<CapturedPhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM captured_photos
+        WHERE latitude IS NOT NULL
+          AND longitude IS NOT NULL
+          AND (addressLine = '' OR cityState = '')
+        ORDER BY capturedAtMillis DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun getPhotosMissingAddress(limit: Int = 50): List<CapturedPhotoEntity>
+
+    @Query("UPDATE captured_photos SET addressLine = :addressLine, cityState = :cityState, country = :country WHERE id = :id")
+    suspend fun updatePhotoAddress(id: Long, addressLine: String, cityState: String, country: String)
+
     @Query("DELETE FROM captured_photos WHERE id = :id")
     suspend fun deletePhotoById(id: Long)
 

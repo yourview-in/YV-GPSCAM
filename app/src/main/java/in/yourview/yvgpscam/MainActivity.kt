@@ -223,6 +223,7 @@ private fun YvGpsCamApp(
     )
 
     val stampConfig by cameraViewModel.stampConfig.collectAsStateWithLifecycle()
+    val isNetworkOnline by container.networkConnectivityObserver.isOnline.collectAsStateWithLifecycle()
     val appUpdateState by container.appUpdateCoordinator.updateState.collectAsStateWithLifecycle()
     val autoPushUpdates by container.appUpdateCoordinator.autoPushEnabled.collectAsStateWithLifecycle()
     val autoOpenAfterUpdate by container.appUpdateCoordinator.autoOpenAfterUpdateEnabled.collectAsStateWithLifecycle()
@@ -241,6 +242,21 @@ private fun YvGpsCamApp(
 
     LaunchedEffect(container) {
         container.appUpdateCoordinator.checkForUpdates()
+    }
+
+    LaunchedEffect(isNetworkOnline) {
+        if (isNetworkOnline) {
+            container.offlineMapRepository.resetNetworkBackoff()
+            val hasLocPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    appContext,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            cameraViewModel.onNetworkConnectivityChanged(isOnline = true, hasLocationPermission = hasLocPerm)
+        }
     }
 
     LaunchedEffect(postUpdateBanner) {

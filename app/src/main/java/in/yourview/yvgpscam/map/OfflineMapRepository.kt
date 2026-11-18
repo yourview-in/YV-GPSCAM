@@ -1,7 +1,10 @@
 package `in`.yourview.yvgpscam.map
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import `in`.yourview.yvgpscam.BuildConfig
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.local.OfflineRegionDao
 import `in`.yourview.yvgpscam.data.model.MapStyle
 import `in`.yourview.yvgpscam.data.model.OfflineRegionEntity
@@ -12,6 +15,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.PI
@@ -37,14 +45,18 @@ data class DownloadProgress(
 class OfflineMapRepository(
     private val context: Context,
     private val regionDao: OfflineRegionDao,
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
+    private val httpClient: OkHttpClient = defaultFastTileClient(),
+    private val isNetworkOnline: () -> Boolean = { NetworkConnectivityObserver.isNetworkConnected(context) }
 ) {
     private val tilesRootDir: File by lazy {
         File(context.filesDir, "offline_tiles").apply { mkdirs() }
     }
+
+    @Volatile
+    private var networkBackoffUntilMillis: Long = 0L
+
+    @Volatile
+    private var consecutiveNetworkFailures: Int = 0
 
     private val androidCertSha1: String by lazy {
         runCatching {
@@ -72,6 +84,16 @@ class OfflineMapRepository(
 
     val savedRegions: Flow<List<OfflineRegionEntity>> = regionDao.getAllRegions()
 
+    fun resetNetworkBackoff() {
+        networkBackoffUntilMillis = 0L
+        consecutiveNetworkFailures = 0
+    }
+
+    fun isNetworkUsableForTiles(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        if (!isNetworkOnline()) return false
+        return nowMillis >= networkBackoffUntilMillis
+    }
+
     fun getTileFile(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): File {
         return when (mapStyle) {
             MapStyle.STANDARD -> File(tilesRootDir, "$z/$x/$y.png")
@@ -92,19 +114,147 @@ class OfflineMapRepository(
         FileOutputStream(file).use { it.write(bytes) }
     }
 
+    /**
+     * Loads the exact cached tile bitmap if present, or crops/upscales from a cached
+     * ancestor parent zoom tile (up to 3 zoom levels out) so downloaded offline areas
+     * keep rendering even when the user zooms in or pans between zoom steps without network.
+     */
+    fun getBestAvailableCachedTileBitmap(
+        z: Int,
+        x: Int,
+        y: Int,
+        mapStyle: MapStyle = MapStyle.STANDARD
+    ): Bitmap? {
+        val exactFile = getTileFile(z, x, y, mapStyle)
+        if (exactFile.exists() && exactFile.length() > 0L) {
+            BitmapFactory.decodeFile(exactFile.absolutePath)?.let { return it }
+        }
+
+        for (delta in 1..4) {
+            val parentZ = z - delta
+            if (parentZ < 1) break
+            val parentX = x shr delta
+            val parentY = y shr delta
+            val parentFile = getTileFile(parentZ, parentX, parentY, mapStyle)
+            if (parentFile.exists() && parentFile.length() > 0L) {
+                val parentBmp = BitmapFactory.decodeFile(parentFile.absolutePath) ?: continue
+                val scale = 1 shl delta
+                val subX = x and (scale - 1)
+                val subY = y and (scale - 1)
+                val srcW = (parentBmp.width / scale).coerceAtLeast(1)
+                val srcH = (parentBmp.height / scale).coerceAtLeast(1)
+                val srcX = (subX * srcW).coerceIn(0, (parentBmp.width - srcW).coerceAtLeast(0))
+                val srcY = (subY * srcH).coerceIn(0, (parentBmp.height - srcH).coerceAtLeast(0))
+
+                val cropped = Bitmap.createBitmap(parentBmp, srcX, srcY, srcW, srcH)
+                val upscaled = Bitmap.createScaledBitmap(cropped, 256, 256, true)
+                if (cropped !== upscaled && cropped !== parentBmp) {
+                    cropped.recycle()
+                }
+                if (parentBmp !== upscaled) {
+                    parentBmp.recycle()
+                }
+                return upscaled
+            }
+        }
+        return null
+    }
+
+    /**
+     * Finds the closest cached Google Static Map image within [maxDistanceMeters] of a visited
+     * coordinate so revisiting or drifting within a previously visited area still renders offline.
+     */
+    fun findNearestCachedStaticMapBytes(
+        lat: Double,
+        lon: Double,
+        zoom: Int,
+        mapStyle: MapStyle,
+        maxDistanceMeters: Double = 350.0
+    ): ByteArray? {
+        val staticDir = File(tilesRootDir, "google_static")
+        if (!staticDir.exists() || !staticDir.isDirectory) return null
+        val prefix = "${mapStyle.name}_z${zoom}_"
+        val candidates = staticDir.listFiles { file ->
+            file.isFile && file.name.startsWith(prefix) && file.name.endsWith(".png") && file.length() > 0L
+        } ?: return null
+
+        var bestFile: File? = null
+        var bestDistance = maxDistanceMeters
+        val distResult = FloatArray(1)
+
+        for (file in candidates) {
+            val coordsPart = file.name.removePrefix(prefix).removeSuffix(".png")
+            val split = coordsPart.split('_')
+            if (split.size != 2) continue
+            val cLat = split[0].toDoubleOrNull() ?: continue
+            val cLon = split[1].toDoubleOrNull() ?: continue
+            android.location.Location.distanceBetween(lat, lon, cLat, cLon, distResult)
+            if (distResult[0].toDouble() <= bestDistance) {
+                bestDistance = distResult[0].toDouble()
+                bestFile = file
+            }
+        }
+        return bestFile?.let { f -> runCatching { f.readBytes() }.getOrNull() }
+    }
+
+    /**
+     * Silently populates the slippy disk tile cache around a visited coordinate while online
+     * so Google Maps SDK TileProvider and MiniMapTileRenderer can render visited areas offline.
+     */
+    fun cacheVisitedAreaTiles(
+        lat: Double,
+        lon: Double,
+        zoom: Int = 15,
+        mapStyle: MapStyle = MapStyle.STANDARD
+    ): Int {
+        if (!isNetworkUsableForTiles()) return 0
+        val clampedZoom = zoom.coerceIn(10, 17)
+        val maxIdx = (1 shl clampedZoom) - 1
+        val centerX = lonToTileX(lon, clampedZoom).coerceIn(0, maxIdx)
+        val centerY = latToTileY(lat, clampedZoom).coerceIn(0, maxIdx)
+
+        var cachedCount = 0
+        val targets = mutableListOf(TileCoord(clampedZoom, centerX, centerY))
+        // Pre-warm parent zoom tile plus immediate neighbors (3x3) for smooth panning/drift offline
+        if (clampedZoom > 10) {
+            targets.add(TileCoord(clampedZoom - 1, centerX shr 1, centerY shr 1))
+        }
+        for (dx in -1..1) {
+            for (dy in -1..1) {
+                if (dx == 0 && dy == 0) continue
+                val nx = (centerX + dx).coerceIn(0, maxIdx)
+                val ny = (centerY + dy).coerceIn(0, maxIdx)
+                targets.add(TileCoord(clampedZoom, nx, ny))
+            }
+        }
+
+        for (tile in targets) {
+            if (!isNetworkUsableForTiles()) break
+            if (!hasCachedTile(tile.z, tile.x, tile.y, mapStyle)) {
+                val bytes = fetchTileFromNetworkAndCache(tile.z, tile.x, tile.y, mapStyle)
+                if (bytes != null) cachedCount++
+            }
+        }
+        return cachedCount
+    }
+
     fun fetchGoogleStaticMapAndCache(
         lat: Double,
         lon: Double,
         zoom: Int,
         outputSizePx: Int,
-        mapStyle: MapStyle
+        mapStyle: MapStyle,
+        allowNetwork: Boolean = true
     ): ByteArray? {
-        if (!GoogleMapsConfig.isApiKeyConfigured()) return null
-        val qLat = String.format(Locale.US, "%.4f", lat)
-        val qLon = String.format(Locale.US, "%.4f", lon)
+        val qLat = String.format(Locale.US, "%.5f", lat)
+        val qLon = String.format(Locale.US, "%.5f", lon)
         val cacheFile = File(tilesRootDir, "google_static/${mapStyle.name}_z${zoom}_${qLat}_${qLon}.png")
         if (cacheFile.exists() && cacheFile.length() > 0L) {
             return runCatching { cacheFile.readBytes() }.getOrNull()
+        }
+
+        if (!allowNetwork || !GoogleMapsConfig.isApiKeyConfigured() || !isNetworkUsableForTiles()) {
+            return findNearestCachedStaticMapBytes(lat, lon, zoom, mapStyle)
         }
 
         val googleMapType = when (mapStyle) {
@@ -131,19 +281,26 @@ class OfflineMapRepository(
             runCatching { FileOutputStream(cacheFile).use { it.write(bytes) } }
             return bytes
         }
-        return null
+        return findNearestCachedStaticMapBytes(lat, lon, zoom, mapStyle)
     }
 
-    fun fetchHybridOverlayTile(z: Int, x: Int, y: Int): ByteArray? {
+    fun fetchHybridOverlayTile(
+        z: Int,
+        x: Int,
+        y: Int,
+        allowNetwork: Boolean = true
+    ): ByteArray? {
         val cacheFile = File(tilesRootDir, "hybrid_overlay/$z/$x/$y.png")
         if (cacheFile.exists() && cacheFile.length() > 0L) {
             return runCatching { cacheFile.readBytes() }.getOrNull()
         }
+        if (!allowNetwork || !isNetworkUsableForTiles()) return null
         val urls = listOf(
             "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/$z/$y/$x",
             "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/$z/$y/$x"
         )
         for (url in urls) {
+            if (!isNetworkUsableForTiles()) return null
             val bytes = executeTileRequest(url)
             if (bytes != null && isValidImageBytes(bytes)) {
                 cacheFile.parentFile?.mkdirs()
@@ -155,6 +312,7 @@ class OfflineMapRepository(
     }
 
     fun fetchTileFromNetworkAndCache(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): ByteArray? {
+        if (!isNetworkUsableForTiles()) return null
         if (GoogleMapsConfig.isApiKeyConfigured()) {
             val n = 2.0.pow(z.toDouble())
             val tileLon = ((x + 0.5) / n) * 360.0 - 180.0
@@ -180,6 +338,7 @@ class OfflineMapRepository(
                 saveTileBytes(z, x, y, googleBytes, mapStyle)
                 return googleBytes
             }
+            if (!isNetworkUsableForTiles()) return null
         }
         val candidateUrls = when (mapStyle) {
             MapStyle.STANDARD -> listOf(
@@ -199,6 +358,7 @@ class OfflineMapRepository(
             )
         }
         for (url in candidateUrls) {
+            if (!isNetworkUsableForTiles()) return null
             val bytes = executeTileRequest(url)
             if (bytes != null && isValidImageBytes(bytes)) {
                 saveTileBytes(z, x, y, bytes, mapStyle)
@@ -209,6 +369,7 @@ class OfflineMapRepository(
     }
 
     private fun executeTileRequest(url: String): ByteArray? {
+        if (!isNetworkUsableForTiles()) return null
         val reqBuilder = Request.Builder()
             .url(url)
             .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
@@ -219,16 +380,35 @@ class OfflineMapRepository(
             }
         }
         val request = reqBuilder.build()
-        return runCatching {
+        return try {
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val bytes = response.body?.bytes()
-                    if (bytes != null && bytes.isNotEmpty()) bytes else null
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        consecutiveNetworkFailures = 0
+                        networkBackoffUntilMillis = 0L
+                        bytes
+                    } else {
+                        null
+                    }
                 } else {
                     null
                 }
             }
-        }.getOrNull()
+        } catch (e: IOException) {
+            val failures = ++consecutiveNetworkFailures
+            val isConnectivityDrop = e is UnknownHostException ||
+                e is ConnectException ||
+                e is NoRouteToHostException ||
+                e is SocketTimeoutException ||
+                failures >= 2
+            if (isConnectivityDrop) {
+                networkBackoffUntilMillis = System.currentTimeMillis() + CIRCUIT_BREAKER_BACKOFF_MS
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun isValidImageBytes(bytes: ByteArray): Boolean {
@@ -286,8 +466,16 @@ class OfflineMapRepository(
             return@withContext Result.failure(IllegalArgumentException("No tiles found for region"))
         }
 
+        val hasUncachedTiles = tiles.any { !hasCachedTile(it.z, it.x, it.y) }
+        if (hasUncachedTiles && !isNetworkOnline()) {
+            return@withContext Result.failure(
+                IllegalStateException("Unable to download map tiles: no internet connection. Offline vector grid remains active.")
+            )
+        }
+
         var completed = 0
         var failed = 0
+        var consecutiveNetworkFails = 0
         var totalBytes = 0L
 
         onProgress(
@@ -304,13 +492,19 @@ class OfflineMapRepository(
             if (existing.exists() && existing.length() > 0L) {
                 totalBytes += existing.length()
                 completed++
+                consecutiveNetworkFails = 0
             } else {
                 val bytes = fetchTileFromNetworkAndCache(tile.z, tile.x, tile.y)
                 if (bytes != null) {
                     totalBytes += bytes.size
                     completed++
+                    consecutiveNetworkFails = 0
                 } else {
                     failed++
+                    consecutiveNetworkFails++
+                    if (consecutiveNetworkFails >= 4 && !isNetworkUsableForTiles()) {
+                        break
+                    }
                 }
             }
             onProgress(
@@ -369,6 +563,15 @@ class OfflineMapRepository(
     }
 
     companion object {
+        private const val CIRCUIT_BREAKER_BACKOFF_MS = 12_000L
+
+        fun defaultFastTileClient(): OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(2500, TimeUnit.MILLISECONDS)
+            .readTimeout(3000, TimeUnit.MILLISECONDS)
+            .writeTimeout(3000, TimeUnit.MILLISECONDS)
+            .callTimeout(4000, TimeUnit.MILLISECONDS)
+            .build()
+
         fun lonToTileX(lon: Double, zoom: Int): Int {
             return floor((lon + 180.0) / 360.0 * (1 shl zoom)).toInt()
         }

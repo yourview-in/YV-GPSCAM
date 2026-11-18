@@ -34,6 +34,10 @@ class NetworkConnectivityObserver(context: Context) {
         override fun onLost(network: Network) {
             _isOnline.value = checkCurrentlyOnline()
         }
+
+        override fun onUnavailable() {
+            _isOnline.value = false
+        }
     }
 
     fun startObserving() {
@@ -49,6 +53,15 @@ class NetworkConnectivityObserver(context: Context) {
         }
     }
 
+    fun stopObserving() {
+        if (!registered) return
+        val cm = connectivityManager ?: return
+        runCatching {
+            cm.unregisterNetworkCallback(callback)
+        }
+        registered = false
+    }
+
     private fun checkCurrentlyOnline(): Boolean {
         val cm = connectivityManager ?: return false
         return runCatching {
@@ -57,5 +70,19 @@ class NetworkConnectivityObserver(context: Context) {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         }.getOrDefault(false)
+    }
+
+    companion object {
+        fun isNetworkConnected(context: Context): Boolean {
+            val cm = context.applicationContext
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            return runCatching {
+                val network = cm.activeNetwork ?: return@runCatching false
+                val caps = cm.getNetworkCapabilities(network) ?: return@runCatching false
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }.getOrDefault(false)
+        }
     }
 }

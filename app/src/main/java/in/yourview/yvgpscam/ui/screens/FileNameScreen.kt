@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -97,7 +98,6 @@ fun FileNameScreen(
         config.parsedFnFieldOrder()
     }
 
-    var expandCustom1 by remember { mutableStateOf(true) }
     var expandCustom2 by remember { mutableStateOf(false) }
     var expandCustom3 by remember { mutableStateOf(false) }
 
@@ -301,38 +301,32 @@ fun FileNameScreen(
                                 }
                                 FileNameField.CUSTOM_1 -> {
                                     FileNameCheckRow(
-                                        title = "Custom Name 1",
-                                        subtitle = config.fnCustomText1.ifBlank { "Tap arrow to edit tag" },
-                                        checked = config.fnIncludeCustom1,
+                                        title = "Brand Name",
+                                        subtitle = "${StampConfig.FIXED_BRAND_NAME} (Required in every file name)",
+                                        checked = true,
                                         enabled = config.customFileNameEnabled,
-                                        onToggle = { v -> viewModel.updateStampConfig { it.copy(fnIncludeCustom1 = v) } },
+                                        locked = true,
+                                        onToggle = {},
                                         canMoveUp = index > 0,
                                         canMoveDown = index < orderedFields.lastIndex,
                                         onMoveUp = { moveField(index, -1) },
                                         onMoveDown = { moveField(index, +1) },
                                         trailingContent = {
-                                            IconButton(onClick = { expandCustom1 = !expandCustom1 }) {
-                                                Icon(
-                                                    imageVector = if (expandCustom1) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                                    contentDescription = "Edit Custom Name 1"
+                                            Surface(
+                                                color = ShutterGold.copy(alpha = 0.16f),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "LOCKED",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = ShutterGold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                 )
                                             }
                                         },
-                                        testTag = "fn_toggle_custom1"
+                                        testTag = "fn_locked_brand_row"
                                     )
-                                    AnimatedVisibility(visible = expandCustom1) {
-                                        OutlinedTextField(
-                                            value = config.fnCustomText1,
-                                            onValueChange = { txt -> viewModel.updateStampConfig { it.copy(fnCustomText1 = txt.take(32)) } },
-                                            label = { Text("Custom Name 1 Text") },
-                                            placeholder = { Text("e.g., YVGPSCAM") },
-                                            singleLine = true,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                                .testTag("fn_custom1_input")
-                                        )
-                                    }
                                 }
                                 FileNameField.CUSTOM_2 -> {
                                     FileNameCheckRow(
@@ -512,12 +506,13 @@ private fun FileNameCheckRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     testTag: String,
+    locked: Boolean = false,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled) { onToggle(!checked) }
+            .clickable(enabled = enabled && !locked) { onToggle(!checked) }
             .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 10.dp)
             .testTag(testTag),
         verticalAlignment = Alignment.CenterVertically,
@@ -537,10 +532,10 @@ private fun FileNameCheckRow(
         ) {
             if (checked) {
                 Icon(
-                    imageVector = Icons.Default.Check,
+                    imageVector = if (locked) Icons.Default.Lock else Icons.Default.Check,
                     contentDescription = "$title enabled",
                     tint = Color(0xFF141619),
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }

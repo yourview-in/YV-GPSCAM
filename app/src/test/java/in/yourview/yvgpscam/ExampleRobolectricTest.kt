@@ -37,10 +37,11 @@ import org.robolectric.annotation.Implements
 class ExampleRobolectricTest {
 
     @Test
-    fun `app name matches YVGPSCAM`() {
+    fun `app name is GPS Camera while package name stays yvgpscam`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("YVGPSCAM", appName)
+        assertEquals("GPS Camera", appName)
+        assertEquals("in.yourview.yvgpscam", context.packageName)
     }
 
     @Test
@@ -242,7 +243,7 @@ class ExampleRobolectricTest {
             template = "Site_{date}_{lat}_{lon}_{city}_{index}",
             indexOneBased = 3
         )
-        assertTrue(formatted.startsWith("Site_"))
+        assertTrue(formatted.startsWith("YVGPSCAM_Site_"))
         assertTrue(formatted.contains("37.4221N"))
         assertTrue(formatted.contains("122.0841W"))
         assertTrue(formatted.contains("Mountain_View_CA"))
@@ -707,6 +708,7 @@ class ExampleRobolectricTest {
             fnIncludeSequence = true,
             photoSequenceNumber = 42,
             fnIncludeCustom1 = false,
+            fnCustomText1 = "OtherBrand",
             fnIncludeCustom3 = true,
             fnCustomText3 = "SubstationB",
             fnIncludeLatLon = false,
@@ -716,8 +718,13 @@ class ExampleRobolectricTest {
             fnFieldOrderSerialized = StampConfig.serializeFnFieldOrder(customOrder)
         )
         val name = `in`.yourview.yvgpscam.camera.MediaStoreSaver.buildCustomFileName(orderedCfg, telemetry, 1763141040000L)
+        assertTrue(name.contains("YVGPSCAM"))
+        assertFalse(name.contains("OtherBrand"))
         assertTrue(name.startsWith("SubstationB_Inspected_"))
-        assertTrue(name.endsWith("_42.jpg"))
+        assertTrue(name.contains("_42"))
+        assertTrue(name.indexOf("SubstationB") < name.indexOf("Inspected"))
+        assertTrue(name.indexOf("Inspected") < name.indexOf("_42"))
+        assertTrue(name.endsWith(".jpg"))
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val stampPrefs = `in`.yourview.yvgpscam.data.local.StampPreferencesRepository(context)
@@ -734,6 +741,9 @@ class ExampleRobolectricTest {
                 stampOrientation = `in`.yourview.yvgpscam.data.model.StampOrientationMode.LANDSCAPE,
                 autoSaveOriginalPhoto = true,
                 showLogo = false, // Must remain locked true
+                customBrandLabel = "TAMPERED", // Must stay YVGPSCAM
+                fnIncludeCustom1 = false, // Must stay locked true
+                fnCustomText1 = "TAMPERED", // Must stay YVGPSCAM
                 useManualLocation = true,
                 selectedManualLocationId = "id_1",
                 manualLocationsJson = StampConfig.serializeManualLocations(manualList)
@@ -748,6 +758,9 @@ class ExampleRobolectricTest {
         assertEquals(`in`.yourview.yvgpscam.data.model.StampOrientationMode.LANDSCAPE, persisted.stampOrientation)
         assertTrue(persisted.autoSaveOriginalPhoto)
         assertTrue(persisted.showLogo)
+        assertEquals(StampConfig.FIXED_BRAND_NAME, persisted.customBrandLabel)
+        assertTrue(persisted.fnIncludeCustom1)
+        assertEquals(StampConfig.FIXED_BRAND_NAME, persisted.fnCustomText1)
         assertEquals("Plant Gate", persisted.selectedManualLocation()?.shortName)
 
         // Verify PDF report creation
@@ -1037,6 +1050,376 @@ class ExampleRobolectricTest {
 
         assertNull(`in`.yourview.yvgpscam.ui.components.parseMapQrCoordinates("https://example.com/report"))
         assertNull(`in`.yourview.yvgpscam.ui.components.parseMapQrCoordinates("geo:999.0,0.0"))
+    }
+
+    @Test
+    fun `photo detail zoom math scales clamps pan proportionally and resets at 1x`() {
+        val (zoomedScale, zoomedPan) = `in`.yourview.yvgpscam.ui.screens.computeZoomedTransform(
+            currentScale = 1f,
+            currentPan = androidx.compose.ui.geometry.Offset.Zero,
+            zoomDelta = 2.5f,
+            panDelta = androidx.compose.ui.geometry.Offset(5000f, -5000f),
+            viewportWidth = 1000f,
+            viewportHeight = 1400f
+        )
+        assertEquals(2.5f, zoomedScale, 0.001f)
+        // maxX = 1000 * (2.5 - 1) / 2 = 750f; maxY = 1400 * 1.5 / 2 = 1050f
+        assertEquals(750f, zoomedPan.x, 0.01f)
+        assertEquals(-1050f, zoomedPan.y, 0.01f)
+
+        val (cappedScale, _) = `in`.yourview.yvgpscam.ui.screens.computeZoomedTransform(
+            currentScale = 4.5f,
+            currentPan = androidx.compose.ui.geometry.Offset.Zero,
+            zoomDelta = 2.0f,
+            panDelta = androidx.compose.ui.geometry.Offset.Zero,
+            viewportWidth = 1000f,
+            viewportHeight = 1400f
+        )
+        assertEquals(5f, cappedScale, 0.001f)
+
+        val (resetScale, resetPan) = `in`.yourview.yvgpscam.ui.screens.computeZoomedTransform(
+            currentScale = 2.5f,
+            currentPan = androidx.compose.ui.geometry.Offset(200f, 300f),
+            zoomDelta = 0.2f,
+            panDelta = androidx.compose.ui.geometry.Offset(10f, 10f),
+            viewportWidth = 1000f,
+            viewportHeight = 1400f
+        )
+        assertEquals(1f, resetScale, 0.001f)
+        assertEquals(androidx.compose.ui.geometry.Offset.Zero, resetPan)
+    }
+
+    @Test
+    fun `dcim gallery export worker mirrors exif tagged jpeg and preserves gps coordinates`(): Unit = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
+
+        val sourceFile = java.io.File(context.cacheDir, "YVGPSCAM_work_test_src.jpg")
+        val bmp = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888)
+        java.io.FileOutputStream(sourceFile).use { fos ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+        }
+        bmp.recycle()
+
+        val exif = androidx.exifinterface.media.ExifInterface(sourceFile)
+        exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE, "YVGPSCAM")
+        exif.setLatLong(17.385044, 78.486671)
+        exif.saveAttributes()
+
+        val displayName = "YVGPSCAM_work_exported_${System.currentTimeMillis()}.jpg"
+        `in`.yourview.yvgpscam.work.DcimExportScheduler.enqueueAfterExif(
+            context = context,
+            sourceUri = android.net.Uri.fromFile(sourceFile).toString(),
+            displayName = displayName,
+            capturedAtMillis = 1763141040000L
+        )
+        val enqueued = androidx.work.WorkManager.getInstance(context)
+            .getWorkInfosByTag(`in`.yourview.yvgpscam.work.DcimExportScheduler.WORK_TAG)
+            .get()
+        assertTrue(enqueued.isNotEmpty())
+
+        val worker = androidx.work.testing.TestListenableWorkerBuilder<`in`.yourview.yvgpscam.work.DcimGalleryExportWorker>(
+            context = context
+        ).setInputData(
+            androidx.work.workDataOf(
+                `in`.yourview.yvgpscam.work.DcimGalleryExportWorker.KEY_SOURCE_URI to android.net.Uri.fromFile(sourceFile).toString(),
+                `in`.yourview.yvgpscam.work.DcimGalleryExportWorker.KEY_DISPLAY_NAME to displayName,
+                `in`.yourview.yvgpscam.work.DcimGalleryExportWorker.KEY_CAPTURED_AT_MILLIS to 1763141040000L
+            )
+        ).build()
+
+        val result = worker.doWork()
+        assertTrue(result is androidx.work.ListenableWorker.Result.Success)
+        val exportedUriStr = (result as androidx.work.ListenableWorker.Result.Success)
+            .outputData
+            .getString(`in`.yourview.yvgpscam.work.DcimGalleryExportWorker.KEY_EXPORTED_URI)
+        assertNotNull(exportedUriStr)
+
+        context.contentResolver.openInputStream(android.net.Uri.parse(exportedUriStr))?.use { stream ->
+            val copiedExif = androidx.exifinterface.media.ExifInterface(stream)
+            assertEquals("YVGPSCAM", copiedExif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE))
+            assertEquals(17.385044, copiedExif.latLong!![0], 0.001)
+            assertEquals(78.486671, copiedExif.latLong!![1], 0.001)
+        }
+
+        `in`.yourview.yvgpscam.work.DcimGalleryExporter.deleteMirroredDcimCopy(context, displayName)
+        sourceFile.delete()
+        Unit
+    }
+
+    @Test
+    fun `location updates listener triggers mini map refresh only when movement exceeds 5 meters`() {
+        var refreshTriggers = 0
+        var lastLat = 0.0
+        var lastLon = 0.0
+        val listener = `in`.yourview.yvgpscam.sensors.LocationUpdatesListener { lat, lon, _ ->
+            refreshTriggers++
+            lastLat = lat
+            lastLon = lon
+        }
+
+        // First fix always triggers initial anchor
+        val originLat = 17.385000
+        val originLon = 78.486600
+        assertTrue(listener.onCoordinatesUpdated(originLat, originLon))
+        assertEquals(1, refreshTriggers)
+
+        // Small movement (~2.8 meters north) must NOT trigger refresh
+        assertFalse(listener.onCoordinatesUpdated(originLat + 0.000025, originLon))
+        assertEquals(1, refreshTriggers)
+
+        // Another small step (~3.3 meters north -> cumulative ~6.1m from anchor) MUST trigger refresh
+        assertTrue(listener.onCoordinatesUpdated(originLat + 0.000055, originLon))
+        assertEquals(2, refreshTriggers)
+        assertEquals(originLat + 0.000055, lastLat, 0.000001)
+        assertEquals(originLon, lastLon, 0.000001)
+
+        // Verify LocationTelemetryManager dispatches to registered LocationUpdatesListener
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val mgr = `in`.yourview.yvgpscam.sensors.LocationTelemetryManager(context)
+        var mgrTriggerCount = 0
+        val mgrListener = `in`.yourview.yvgpscam.sensors.LocationUpdatesListener { _, _, _ ->
+            mgrTriggerCount++
+        }
+        mgr.addLocationUpdatesListener(mgrListener)
+
+        val now = System.currentTimeMillis()
+        mgr.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = originLat
+                longitude = originLon
+                accuracy = 4f
+                time = now
+            }
+        )
+        assertEquals(1, mgrTriggerCount)
+
+        // 3m jitter -> ignored by mini-map threshold listener
+        mgr.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = originLat + 0.000027
+                longitude = originLon
+                accuracy = 4f
+                time = now + 1000L
+            }
+        )
+        assertEquals(1, mgrTriggerCount)
+
+        // 8m move from anchor -> exceeds 5m threshold -> triggers refresh
+        mgr.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = originLat + 0.000099
+                longitude = originLon
+                accuracy = 4f
+                time = now + 2000L
+            }
+        )
+        assertEquals(2, mgrTriggerCount)
+        mgr.removeLocationUpdatesListener(mgrListener)
+
+        // Verify CameraViewModel wires LocationUpdatesListener and refreshes miniMapBitmap
+        val db = AppDatabase.getInstance(context)
+        val offlineRepo = OfflineMapRepository(context, db.offlineRegionDao())
+        val stampPrefs = `in`.yourview.yvgpscam.data.local.StampPreferencesRepository(context)
+        runBlocking {
+            stampPrefs.updateConfig { it.copy(offlineOnlyMapMode = true, useManualLocation = false) }
+        }
+
+        val vm = `in`.yourview.yvgpscam.ui.viewmodel.CameraViewModel(
+            locationManager = mgr,
+            stampPrefs = stampPrefs,
+            photoRepository = `in`.yourview.yvgpscam.data.local.PhotoRepository(context, db.capturedPhotoDao()),
+            miniMapRenderer = MiniMapTileRenderer(offlineRepo),
+            mediaStoreSaver = `in`.yourview.yvgpscam.camera.MediaStoreSaver(context, PhotoStampRenderer(context))
+        )
+
+        fun awaitRefresh(minCount: Long, timeoutMs: Long = 5000L): Long {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (vm.miniMapRefreshCount.value < minCount && System.currentTimeMillis() < deadline) {
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                Thread.sleep(20L)
+            }
+            return vm.miniMapRefreshCount.value
+        }
+
+        val initialCount = awaitRefresh(1L)
+        assertTrue(initialCount >= 1L)
+
+        // Move < 5m (~2.2m north) -> should NOT trigger mini-map refresh
+        mgr.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = originLat + 0.000119
+                longitude = originLon
+                accuracy = 3.5f
+                time = now + 3000L
+            }
+        )
+        Thread.sleep(100L)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertEquals(initialCount, vm.miniMapRefreshCount.value)
+
+        // Move > 5m (~12m north from last rendered originLat + 0.000099) -> MUST trigger mini-map refresh
+        mgr.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = originLat + 0.000210
+                longitude = originLon
+                accuracy = 3.5f
+                time = now + 4000L
+            }
+        )
+        val afterCount = awaitRefresh(initialCount + 1L)
+        assertTrue(afterCount > initialCount)
+        assertNotNull(vm.miniMapBitmap.value)
+    }
+
+    @Test
+    fun `offline map repository supports parent zoom fallback circuit breaker and fast fail on network drop`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = AppDatabase.getInstance(context)
+
+        // 1. Save a valid 256x256 PNG at zoom 14 and verify z=15 crops/upscales seamlessly when offline
+        val offlineRepo = OfflineMapRepository(
+            context = context,
+            regionDao = db.offlineRegionDao(),
+            isNetworkOnline = { false }
+        )
+        val tileBmp = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val baos = java.io.ByteArrayOutputStream()
+        tileBmp.compress(Bitmap.CompressFormat.PNG, 90, baos)
+        tileBmp.recycle()
+        offlineRepo.saveTileBytes(14, 2620, 6332, baos.toByteArray(), MapStyle.STANDARD)
+
+        // Clean exact Z15 target if leftover from other tests
+        offlineRepo.getTileFile(15, 5241, 12665, MapStyle.STANDARD).delete()
+        val fallbackBmp = offlineRepo.getBestAvailableCachedTileBitmap(15, 5241, 12665, MapStyle.STANDARD)
+        assertNotNull(fallbackBmp)
+        assertEquals(256, fallbackBmp!!.width)
+        assertEquals(256, fallbackBmp.height)
+        fallbackBmp.recycle()
+
+        // 2. Sudden network failure in downloadRegion fails immediately when offline
+        val downloadRes = offlineRepo.downloadRegion(
+            regionName = "Remote Site",
+            centerLat = 17.385044,
+            centerLon = 78.486671,
+            radiusKm = 1.0,
+            zoomMin = 14,
+            zoomMax = 15,
+            onProgress = {}
+        )
+        assertTrue(downloadRes.isFailure)
+
+        // 3. Sudden DNS / connection failure while OS still thinks Wi-Fi is up trips circuit breaker
+        var callCount = 0
+        val failingClient = okhttp3.OkHttpClient.Builder()
+            .addInterceptor {
+                callCount++
+                throw java.net.UnknownHostException("offline dead zone")
+            }
+            .build()
+        val flakyRepo = OfflineMapRepository(
+            context = context,
+            regionDao = db.offlineRegionDao(),
+            httpClient = failingClient,
+            isNetworkOnline = { true }
+        )
+        assertTrue(flakyRepo.isNetworkUsableForTiles())
+        val fetched = flakyRepo.fetchTileFromNetworkAndCache(15, 5000, 5000, MapStyle.STANDARD)
+        assertNull(fetched)
+        assertEquals(1, callCount) // Stopped immediately after UnknownHostException instead of retrying 3+ URLs
+        assertFalse(flakyRepo.isNetworkUsableForTiles())
+
+        // MiniMapTileRenderer renders immediately without hanging even with offlineOnly = false
+        val renderer = MiniMapTileRenderer(flakyRepo)
+        val rendered = renderer.renderMiniMapBitmap(
+            latitude = 37.422094,
+            longitude = -122.084057,
+            outputSizePx = 260,
+            mapStyle = MapStyle.STANDARD,
+            offlineOnly = false
+        )
+        assertEquals(260, rendered.width)
+        rendered.recycle()
+
+        flakyRepo.resetNetworkBackoff()
+        assertTrue(flakyRepo.isNetworkUsableForTiles())
+    }
+
+    @Test
+    fun `location manager maintains gnss geotagging and regional locality when internet disappears`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val manager = `in`.yourview.yvgpscam.sensors.LocationTelemetryManager(context)
+        val baseTime = System.currentTimeMillis()
+
+        // Pre-drop Wi-Fi/Network fix followed 25s later by a slightly coarser Fused/GNSS fix offline
+        val preDropNetwork = android.location.Location(android.location.LocationManager.NETWORK_PROVIDER).apply {
+            latitude = 17.385044
+            longitude = 78.486671
+            accuracy = 12f
+            time = baseTime - 25_000L
+        }
+        val postDropFused = android.location.Location("fused").apply {
+            latitude = 17.385400
+            longitude = 78.486900
+            accuracy = 28f
+            time = baseTime
+        }
+        assertTrue(
+            `in`.yourview.yvgpscam.sensors.LocationTelemetryManager.isBetterLocation(
+                postDropFused,
+                preDropNetwork
+            )
+        )
+
+        // Seed cached address around origin (as if geocoded while online before losing signal)
+        val originLoc = android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+            latitude = 17.385044
+            longitude = 78.486671
+            accuracy = 5f
+            time = baseTime
+        }
+        manager.saveCachedAddressForTest(
+            loc = originLoc,
+            street = "Nagole Main Rd",
+            cityState = "Hyderabad, Telangana",
+            country = "India",
+            countryCode = "IN",
+            postal = "500068"
+        )
+
+        // 1. Within 300m -> preserves full street + regional locality + exact GPS fix offline
+        val nearbyFix = android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+            latitude = 17.386000 // ~106m north
+            longitude = 78.486671
+            altitude = 510.0
+            accuracy = 6f
+            time = baseTime + 5_000L
+        }
+        manager.acceptLocationForTest(nearbyFix)
+        var tel = manager.telemetry.value
+        assertEquals(17.386000, tel.latitude!!, 0.000001)
+        assertEquals("Nagole Main Rd", tel.addressLine)
+        assertEquals("Hyderabad, Telangana", tel.cityState)
+        assertEquals("India", tel.country)
+        assertNotNull(tel.plusCode)
+
+        // 2. ~1.5km away (outside 300m street radius, inside 5km regional radius) ->
+        // clears stale street address while keeping city/country + exact coordinates + Plus Code
+        val midRangeFix = android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+            latitude = 17.398500 // ~1.5km north
+            longitude = 78.486671
+            altitude = 518.0
+            accuracy = 8f
+            time = baseTime + 30_000L
+        }
+        manager.acceptLocationForTest(midRangeFix)
+        tel = manager.telemetry.value
+        assertEquals(17.398500, tel.latitude!!, 0.000001)
+        assertEquals("", tel.addressLine)
+        assertEquals("Hyderabad, Telangana", tel.cityState)
+        assertEquals("India", tel.country)
+        assertEquals("IN", tel.countryCode)
+        assertEquals(GpsSignalState.LOCKED, tel.signalState)
     }
 }
 

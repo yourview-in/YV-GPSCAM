@@ -562,7 +562,7 @@ class PhotoStampRenderer(private val context: Context) {
         drawRoundedBitmap(canvas, logoBmp, logoRect, 16f * baseScale, layout.logoAlphaInt)
         logoBmp.recycle()
 
-        val brandLabel = config.customBrandLabel.ifBlank { "YVGPSCAM" }
+        val brandLabel = StampConfig.FIXED_BRAND_NAME
         val brandPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = layout.titleTextColor
             textSize = 18.5f * baseScale

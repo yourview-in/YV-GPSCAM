@@ -753,13 +753,13 @@ fun SettingsScreen(
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(9.dp))
                         )
-                        Text("YVGPSCAM")
+                        Text("GPS Camera • YVGPSCAM")
                     }
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "YVGPSCAM captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, Google Maps tiles, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports.",
+                            text = "GPS Camera (YVGPSCAM) captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, Google Maps tiles, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

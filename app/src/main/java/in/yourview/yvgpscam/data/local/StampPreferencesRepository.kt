@@ -127,7 +127,7 @@ class StampPreferencesRepository(private val context: Context) {
             ?: StampSize.MEDIUM,
         stampPosition = prefs[Keys.STAMP_POSITION]?.let { runCatching { StampPosition.valueOf(it) }.getOrNull() }
             ?: StampPosition.BOTTOM_CENTER,
-        customBrandLabel = prefs[Keys.CUSTOM_BRAND_LABEL] ?: "YVGPSCAM",
+        customBrandLabel = StampConfig.FIXED_BRAND_NAME,
         coordinateFormat = prefs[Keys.COORDINATE_FORMAT]?.let { runCatching { CoordinateFormat.valueOf(it) }.getOrNull() }
             ?: CoordinateFormat.DECIMAL_DEGREES,
         dateTimeFormat = prefs[Keys.DATETIME_FORMAT]?.let { runCatching { DateTimeFormat.valueOf(it) }.getOrNull() }
@@ -160,8 +160,8 @@ class StampPreferencesRepository(private val context: Context) {
         customFileNameEnabled = prefs[Keys.FN_ENABLED] ?: true,
         fnIncludeDateTime = prefs[Keys.FN_DATETIME] ?: true,
         fnIncludeSequence = prefs[Keys.FN_SEQUENCE] ?: true,
-        fnIncludeCustom1 = prefs[Keys.FN_CUSTOM_1] ?: true,
-        fnCustomText1 = prefs[Keys.FN_CUSTOM_1_TEXT] ?: "YVGPSCAM",
+        fnIncludeCustom1 = true,
+        fnCustomText1 = StampConfig.FIXED_BRAND_NAME,
         fnIncludeCustom2 = prefs[Keys.FN_CUSTOM_2] ?: false,
         fnCustomText2 = prefs[Keys.FN_CUSTOM_2_TEXT] ?: "",
         fnIncludeCustom3 = prefs[Keys.FN_CUSTOM_3] ?: false,
@@ -217,7 +217,7 @@ class StampPreferencesRepository(private val context: Context) {
             prefs[Keys.ACCENT_COLOR] = updated.accentColor.name
             prefs[Keys.STAMP_SIZE] = updated.stampSize.name
             prefs[Keys.STAMP_POSITION] = updated.stampPosition.name
-            prefs[Keys.CUSTOM_BRAND_LABEL] = updated.customBrandLabel
+            prefs[Keys.CUSTOM_BRAND_LABEL] = StampConfig.FIXED_BRAND_NAME
             prefs[Keys.COORDINATE_FORMAT] = updated.coordinateFormat.name
             prefs[Keys.DATETIME_FORMAT] = updated.dateTimeFormat.name
             prefs[Keys.MAP_STYLE] = updated.mapStyle.name
@@ -248,8 +248,8 @@ class StampPreferencesRepository(private val context: Context) {
             prefs[Keys.FN_ENABLED] = updated.customFileNameEnabled
             prefs[Keys.FN_DATETIME] = updated.fnIncludeDateTime
             prefs[Keys.FN_SEQUENCE] = updated.fnIncludeSequence
-            prefs[Keys.FN_CUSTOM_1] = updated.fnIncludeCustom1
-            prefs[Keys.FN_CUSTOM_1_TEXT] = updated.fnCustomText1
+            prefs[Keys.FN_CUSTOM_1] = true
+            prefs[Keys.FN_CUSTOM_1_TEXT] = StampConfig.FIXED_BRAND_NAME
             prefs[Keys.FN_CUSTOM_2] = updated.fnIncludeCustom2
             prefs[Keys.FN_CUSTOM_2_TEXT] = updated.fnCustomText2
             prefs[Keys.FN_CUSTOM_3] = updated.fnIncludeCustom3

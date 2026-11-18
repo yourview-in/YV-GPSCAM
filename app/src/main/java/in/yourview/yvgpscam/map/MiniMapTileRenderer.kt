@@ -13,6 +13,7 @@ import android.util.LruCache
 import `in`.yourview.yvgpscam.data.model.MapStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.floor
@@ -23,6 +24,31 @@ class MiniMapTileRenderer(
 ) {
     private val tileMemoryCache = object : LruCache<String, Bitmap>(120) {
         override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
+    fun createTileProvider(
+        mapStyle: MapStyle,
+        offlineOnly: Boolean = false
+    ): DiskCachedMapTileProvider {
+        return DiskCachedMapTileProvider(
+            offlineMapRepository = offlineMapRepository,
+            mapStyle = mapStyle,
+            allowNetwork = { !offlineOnly && offlineMapRepository.isNetworkUsableForTiles() }
+        )
+    }
+
+    suspend fun prewarmVisitedAreaCache(
+        latitude: Double,
+        longitude: Double,
+        zoom: Int = 15,
+        mapStyle: MapStyle = MapStyle.STANDARD
+    ): Int = withContext(Dispatchers.IO) {
+        offlineMapRepository.cacheVisitedAreaTiles(
+            lat = latitude,
+            lon = longitude,
+            zoom = zoom,
+            mapStyle = mapStyle
+        )
     }
 
     suspend fun renderMiniMapBitmap(
@@ -57,20 +83,60 @@ class MiniMapTileRenderer(
             return@withContext result
         }
 
-        val googleStaticBackdrop = if (!offlineOnly) {
-            loadGoogleStaticMapBitmap(latitude, longitude, zoom, outputSizePx, mapStyle)
-        } else {
-            null
-        }
+        val allowNetwork = !offlineOnly && offlineMapRepository.isNetworkUsableForTiles()
 
-        val tileBackdrop = googleStaticBackdrop ?: composeTilesForLocation(
+        val cachedStaticBackdrop = loadGoogleStaticMapBitmap(
             lat = latitude,
             lon = longitude,
             zoom = zoom,
             outputSizePx = outputSizePx,
             mapStyle = mapStyle,
-            offlineOnly = offlineOnly
+            allowNetwork = false
         )
+
+        val googleStaticBackdrop = cachedStaticBackdrop ?: if (allowNetwork) {
+            withTimeoutOrNull(2600L) {
+                loadGoogleStaticMapBitmap(
+                    lat = latitude,
+                    lon = longitude,
+                    zoom = zoom,
+                    outputSizePx = outputSizePx,
+                    mapStyle = mapStyle,
+                    allowNetwork = true
+                )
+            }
+        } else {
+            null
+        }
+
+        val tileBackdrop = googleStaticBackdrop ?: if (allowNetwork && offlineMapRepository.isNetworkUsableForTiles()) {
+            withTimeoutOrNull(2800L) {
+                composeTilesForLocation(
+                    lat = latitude,
+                    lon = longitude,
+                    zoom = zoom,
+                    outputSizePx = outputSizePx,
+                    mapStyle = mapStyle,
+                    offlineOnly = false
+                )
+            } ?: composeTilesForLocation(
+                lat = latitude,
+                lon = longitude,
+                zoom = zoom,
+                outputSizePx = outputSizePx,
+                mapStyle = mapStyle,
+                offlineOnly = true
+            )
+        } else {
+            composeTilesForLocation(
+                lat = latitude,
+                lon = longitude,
+                zoom = zoom,
+                outputSizePx = outputSizePx,
+                mapStyle = mapStyle,
+                offlineOnly = true
+            )
+        }
 
         if (tileBackdrop != null) {
             canvas.drawBitmap(tileBackdrop, null, RectF(0f, 0f, outputSizePx.toFloat(), outputSizePx.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
@@ -104,16 +170,23 @@ class MiniMapTileRenderer(
         lon: Double,
         zoom: Int,
         outputSizePx: Int,
-        mapStyle: MapStyle
+        mapStyle: MapStyle,
+        allowNetwork: Boolean
     ): Bitmap? {
-        val qLat = String.format(Locale.US, "%.4f", lat)
-        val qLon = String.format(Locale.US, "%.4f", lon)
+        val qLat = String.format(Locale.US, "%.5f", lat)
+        val qLon = String.format(Locale.US, "%.5f", lon)
         val memKey = "gstatic/${mapStyle.name}/$zoom/$qLat/$qLon"
         tileMemoryCache.get(memKey)?.let { cached ->
             if (!cached.isRecycled) return cached
         }
-        val bytes = offlineMapRepository.fetchGoogleStaticMapAndCache(lat, lon, zoom, outputSizePx, mapStyle)
-            ?: return null
+        val bytes = offlineMapRepository.fetchGoogleStaticMapAndCache(
+            lat = lat,
+            lon = lon,
+            zoom = zoom,
+            outputSizePx = outputSizePx,
+            mapStyle = mapStyle,
+            allowNetwork = allowNetwork
+        ) ?: return null
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
         tileMemoryCache.put(memKey, bmp)
         return bmp
@@ -155,14 +228,20 @@ class MiniMapTileRenderer(
             for (dy in minDy..maxDy) {
                 val tx = (centerTileX + dx).coerceIn(0, maxTileIndex)
                 val ty = (centerTileY + dy).coerceIn(0, maxTileIndex)
-                val tileBitmap = loadSingleTile(zoom, tx, ty, mapStyle, offlineOnly)
+                val effectiveOfflineTile = offlineOnly || !offlineMapRepository.isNetworkUsableForTiles()
+                val tileBitmap = loadSingleTile(zoom, tx, ty, mapStyle, effectiveOfflineTile)
                 if (tileBitmap != null) {
                     loadedCount++
                     val drawX = ((dx + 1) * 256).toFloat()
                     val drawY = ((dy + 1) * 256).toFloat()
                     gridCanvas.drawBitmap(tileBitmap, drawX, drawY, null)
-                    if (mapStyle == MapStyle.HYBRID && !offlineOnly) {
-                        loadHybridOverlayBitmap(zoom, tx, ty)?.let { overlayBmp ->
+                    if (mapStyle == MapStyle.HYBRID) {
+                        loadHybridOverlayBitmap(
+                            z = zoom,
+                            x = tx,
+                            y = ty,
+                            allowNetwork = !effectiveOfflineTile
+                        )?.let { overlayBmp ->
                             gridCanvas.drawBitmap(overlayBmp, drawX, drawY, null)
                         }
                     }
@@ -190,29 +269,30 @@ class MiniMapTileRenderer(
         val key = "${mapStyle.name}/$z/$x/$y"
         tileMemoryCache.get(key)?.let { if (!it.isRecycled) return it }
 
-        val cachedFile = offlineMapRepository.getTileFile(z, x, y, mapStyle)
-        if (cachedFile.exists() && cachedFile.length() > 0L) {
-            val bmp = BitmapFactory.decodeFile(cachedFile.absolutePath)
-            if (bmp != null) {
-                tileMemoryCache.put(key, bmp)
-                return bmp
-            }
-        }
+        val fallbackKey = "FALLBACK/$key"
+        val tileProvider = createTileProvider(mapStyle = mapStyle, offlineOnly = offlineOnly)
+        val outcome = tileProvider.loadTileBitmap(zoom = z, x = x, y = y, offlineOnly = offlineOnly)
+            ?: return tileMemoryCache.get(fallbackKey)?.takeUnless { it.isRecycled }
 
-        if (offlineOnly) return null
-
-        val bytes = offlineMapRepository.fetchTileFromNetworkAndCache(z, x, y, mapStyle) ?: return null
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        if (bmp != null) {
-            tileMemoryCache.put(key, bmp)
-        }
-        return bmp
+        val cacheKey = if (outcome.isFromAncestorFallback) fallbackKey else key
+        tileMemoryCache.put(cacheKey, outcome.bitmap)
+        return outcome.bitmap
     }
 
-    private fun loadHybridOverlayBitmap(z: Int, x: Int, y: Int): Bitmap? {
+    private fun loadHybridOverlayBitmap(
+        z: Int,
+        x: Int,
+        y: Int,
+        allowNetwork: Boolean
+    ): Bitmap? {
         val key = "HYBRID_OVERLAY/$z/$x/$y"
         tileMemoryCache.get(key)?.let { if (!it.isRecycled) return it }
-        val bytes = offlineMapRepository.fetchHybridOverlayTile(z, x, y) ?: return null
+        val bytes = offlineMapRepository.fetchHybridOverlayTile(
+            z = z,
+            x = x,
+            y = y,
+            allowNetwork = allowNetwork
+        ) ?: return null
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         if (bmp != null) {
             tileMemoryCache.put(key, bmp)

@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
+import `in`.yourview.yvgpscam.data.model.StampConfig
+import `in`.yourview.yvgpscam.work.DcimGalleryExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -27,6 +29,14 @@ class PhotoRepository(
 
     suspend fun insertPhoto(photo: CapturedPhotoEntity): Long = photoDao.insertPhoto(photo)
 
+    suspend fun getAllPhotosSnapshot(): List<CapturedPhotoEntity> = photoDao.getAllPhotosSnapshot()
+
+    suspend fun getPhotosMissingAddress(limit: Int = 50): List<CapturedPhotoEntity> =
+        photoDao.getPhotosMissingAddress(limit)
+
+    suspend fun updatePhotoAddress(id: Long, addressLine: String, cityState: String, country: String) =
+        photoDao.updatePhotoAddress(id, addressLine, cityState, country)
+
     suspend fun deletePhoto(photo: CapturedPhotoEntity) = withContext(Dispatchers.IO) {
         runCatching {
             val uri = Uri.parse(photo.mediaUri)
@@ -36,6 +46,7 @@ class PhotoRepository(
                 File(uri.path!!).delete()
             }
         }
+        DcimGalleryExporter.deleteMirroredDcimCopy(context, photo.displayName)
         photoDao.deletePhotoById(photo.id)
     }
 
@@ -51,6 +62,7 @@ class PhotoRepository(
                         File(uri.path!!).delete()
                     }
                 }
+                DcimGalleryExporter.deleteMirroredDcimCopy(context, photo.displayName)
             }
             photos.map { it.id }.chunked(500).forEach { chunk ->
                 photoDao.deletePhotosByIds(chunk)
@@ -96,6 +108,7 @@ class PhotoRepository(
                     }
                 }
 
+                DcimGalleryExporter.renameMirroredDcimCopy(context, photo.displayName, candidate)
                 photoDao.updatePhotoDisplayNameAndUri(photo.id, candidate, updatedUri)
                 renamedCount++
             }
@@ -109,7 +122,7 @@ class PhotoRepository(
             template: String,
             indexOneBased: Int = 1
         ): String {
-            val rawTemplate = template.trim().ifBlank { "YV_{date}_{coords}_{index}" }
+            val rawTemplate = template.trim().ifBlank { "${StampConfig.FIXED_BRAND_NAME}_{date}_{coords}_{index}" }
             val dateStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(photo.capturedAtMillis))
             val timeStr = SimpleDateFormat("HHmmss", Locale.US).format(Date(photo.capturedAtMillis))
             val dateTimeStr = "${dateStr}_$timeStr"
@@ -149,14 +162,18 @@ class PhotoRepository(
                 .replace("{index}", indexStr, ignoreCase = true)
                 .replace("{orig}", origStr, ignoreCase = true)
 
-            val sanitized = expanded
+            var sanitized = expanded
                 .removeSuffix(".jpg")
                 .removeSuffix(".jpeg")
                 .removeSuffix(".JPG")
                 .replace(Regex("[^A-Za-z0-9._-]+"), "_")
                 .replace(Regex("_+"), "_")
                 .trim('_', '.')
-                .ifBlank { "YV_${dateStr}_$indexStr" }
+                .ifBlank { "${StampConfig.FIXED_BRAND_NAME}_${dateStr}_$indexStr" }
+
+            if (!sanitized.contains(StampConfig.FIXED_BRAND_NAME, ignoreCase = true)) {
+                sanitized = "${StampConfig.FIXED_BRAND_NAME}_$sanitized"
+            }
 
             return "$sanitized.jpg"
         }

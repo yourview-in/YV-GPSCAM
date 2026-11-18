@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">YVGPSCAM</string>
+    <string name="app_name">GPS Camera</string>
     <string name="nav_camera">Caméra</string>
     <string name="nav_gallery">Galerie</string>
     <string name="nav_studio">Modèles</string>

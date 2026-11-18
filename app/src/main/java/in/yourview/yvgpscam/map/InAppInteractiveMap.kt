@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -59,6 +60,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.local.AppDatabase
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
 import `in`.yourview.yvgpscam.data.model.MapStyle
@@ -242,11 +245,35 @@ fun InAppInteractiveTileMap(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    val offlineRepo = remember(context) {
+    val connectivityObserver = remember(context) {
+        NetworkConnectivityObserver(context.applicationContext)
+    }
+    DisposableEffect(connectivityObserver) {
+        connectivityObserver.startObserving()
+        onDispose { connectivityObserver.stopObserving() }
+    }
+    val isOnline by connectivityObserver.isOnline.collectAsStateWithLifecycle()
+
+    val offlineRepo = remember(context, connectivityObserver) {
         OfflineMapRepository(
             context = context.applicationContext,
-            regionDao = AppDatabase.getInstance(context.applicationContext).offlineRegionDao()
+            regionDao = AppDatabase.getInstance(context.applicationContext).offlineRegionDao(),
+            isNetworkOnline = { connectivityObserver.isOnline.value }
         )
+    }
+
+    val diskTileProvider = remember(offlineRepo, mapStyle, offlineOnlyMapMode, isOnline) {
+        DiskCachedMapTileProvider(
+            offlineMapRepository = offlineRepo,
+            mapStyle = mapStyle,
+            allowNetwork = { !offlineOnlyMapMode && isOnline && offlineRepo.isNetworkUsableForTiles() }
+        )
+    }
+
+    LaunchedEffect(isOnline) {
+        if (isOnline) {
+            offlineRepo.resetNetworkBackoff()
+        }
     }
 
     var viewLat by remember { mutableStateOf(centerLat) }
@@ -297,32 +324,33 @@ fun InAppInteractiveTileMap(
         val minIy = floor((-originY) / tileSizeOnScreen).toInt().coerceIn(0, nTiles - 1)
         val maxIy = floor((heightPx - originY) / tileSizeOnScreen).toInt().coerceIn(0, nTiles - 1)
 
-        // Request missing tiles asynchronously for current viewport
-        LaunchedEffect(tileZoom, minIx, maxIx, minIy, maxIy, mapStyle, offlineOnlyMapMode) {
+        // Request missing tiles asynchronously via DiskCachedMapTileProvider; seamlessly fall back to cached/parent tiles offline
+        LaunchedEffect(tileZoom, minIx, maxIx, minIy, maxIy, mapStyle, offlineOnlyMapMode, isOnline, diskTileProvider) {
+            val allowNetworkFetch = !offlineOnlyMapMode && isOnline
             for (ix in minIx..maxIx) {
                 val tx = ((ix % nTiles) + nTiles) % nTiles
                 for (iy in minIy..maxIy) {
                     val key = "${mapStyle.name}/$tileZoom/$tx/$iy"
+                    val fallbackKey = "FALLBACK/$key"
                     val overlayKey = "HYBRID_OVERLAY/$tileZoom/$tx/$iy"
-                    val needBase = SharedSlippyTileCache.get(key) == null
+                    val hasExact = SharedSlippyTileCache.get(key) != null
+                    val hasFallback = SharedSlippyTileCache.get(fallbackKey) != null
+                    val needBase = !hasExact && (allowNetworkFetch || !hasFallback)
                     val needHybridOverlay = mapStyle == MapStyle.HYBRID && SharedSlippyTileCache.get(overlayKey) == null
 
                     if (needBase && SharedSlippyTileCache.tryClaimFetch(key)) {
                         scope.launch(Dispatchers.IO) {
                             try {
-                                val cachedFile = offlineRepo.getTileFile(tileZoom, tx, iy, mapStyle)
-                                val bmp = if (cachedFile.exists() && cachedFile.length() > 0L) {
-                                    BitmapFactory.decodeFile(cachedFile.absolutePath)
-                                } else if (!offlineOnlyMapMode) {
+                                val outcome = if (allowNetworkFetch && !offlineRepo.hasCachedTile(tileZoom, tx, iy, mapStyle)) {
                                     SharedSlippyTileCache.withPermit {
-                                        val bytes = offlineRepo.fetchTileFromNetworkAndCache(tileZoom, tx, iy, mapStyle)
-                                        bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                        diskTileProvider.loadTileBitmap(tileZoom, tx, iy, offlineOnly = false)
                                     }
                                 } else {
-                                    null
+                                    diskTileProvider.loadTileBitmap(tileZoom, tx, iy, offlineOnly = !allowNetworkFetch)
                                 }
-                                if (bmp != null) {
-                                    SharedSlippyTileCache.put(key, bmp)
+                                if (outcome != null) {
+                                    val cacheKey = if (outcome.isFromAncestorFallback) fallbackKey else key
+                                    SharedSlippyTileCache.put(cacheKey, outcome.bitmap)
                                     withContext(Dispatchers.Main) { tileRevision++ }
                                 }
                             } finally {
@@ -331,16 +359,20 @@ fun InAppInteractiveTileMap(
                         }
                     }
 
-                    if (needHybridOverlay && !offlineOnlyMapMode && SharedSlippyTileCache.tryClaimFetch(overlayKey)) {
+                    if (needHybridOverlay && SharedSlippyTileCache.tryClaimFetch(overlayKey)) {
                         scope.launch(Dispatchers.IO) {
                             try {
-                                SharedSlippyTileCache.withPermit {
-                                    val bytes = offlineRepo.fetchHybridOverlayTile(tileZoom, tx, iy)
-                                    val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-                                    if (bmp != null) {
-                                        SharedSlippyTileCache.put(overlayKey, bmp)
-                                        withContext(Dispatchers.Main) { tileRevision++ }
+                                val bytes = if (allowNetworkFetch && offlineRepo.isNetworkUsableForTiles()) {
+                                    SharedSlippyTileCache.withPermit {
+                                        offlineRepo.fetchHybridOverlayTile(tileZoom, tx, iy, allowNetwork = true)
                                     }
+                                } else {
+                                    offlineRepo.fetchHybridOverlayTile(tileZoom, tx, iy, allowNetwork = false)
+                                }
+                                val bmp = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                if (bmp != null) {
+                                    SharedSlippyTileCache.put(overlayKey, bmp)
+                                    withContext(Dispatchers.Main) { tileRevision++ }
                                 }
                             } finally {
                                 SharedSlippyTileCache.finishFetch(overlayKey)
@@ -452,6 +484,7 @@ fun InAppInteractiveTileMap(
                 for (iy in minIy..maxIy) {
                     val key = "${mapStyle.name}/$tileZoom/$tx/$iy"
                     val tileBmp = SharedSlippyTileCache.get(key)
+                        ?: SharedSlippyTileCache.get("FALLBACK/$key")
                     if (tileBmp != null) {
                         loadedVisibleTiles++
                         val destY = (originY + iy * tileSizeOnScreen).roundToInt()
@@ -532,13 +565,15 @@ fun InAppInteractiveTileMap(
                 Text(
                     text = when {
                         offlineOnlyMapMode -> "OFFLINE VECTOR / CACHED MAP"
+                        !isOnline && loadedVisibleTiles > 0 -> "NO NETWORK · CACHED MAP • Z${viewZoom.roundToInt()}"
+                        !isOnline -> "NO NETWORK · OFFLINE VECTOR • Z${viewZoom.roundToInt()}"
                         loadedVisibleTiles > 0 -> "IN-APP MAP • Z${viewZoom.roundToInt()}"
                         else -> "SURVEY VECTOR MAP • Z${viewZoom.roundToInt()}"
                     },
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (offlineOnlyMapMode) ShutterGold else TelemetryEmerald,
+                    color = if (offlineOnlyMapMode || !isOnline) ShutterGold else TelemetryEmerald,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                 )
             }

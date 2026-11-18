@@ -25,12 +25,17 @@ import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import `in`.yourview.yvgpscam.BuildConfig
+import `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
 import `in`.yourview.yvgpscam.data.model.FileNameField
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
 import `in`.yourview.yvgpscam.data.model.StampConfig
 import `in`.yourview.yvgpscam.data.model.StampPosition
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraAspectRatio
+import `in`.yourview.yvgpscam.work.DcimExportScheduler
+import `in`.yourview.yvgpscam.work.LocationMetadataSyncScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -443,7 +448,14 @@ class MediaStoreSaver(
 
         stamped.recycle()
 
-        return CapturedPhotoEntity(
+        DcimExportScheduler.enqueueAfterExif(
+            context = context,
+            sourceUri = uri.toString(),
+            displayName = fileName,
+            capturedAtMillis = now
+        )
+
+        val entity = CapturedPhotoEntity(
             mediaUri = uri.toString(),
             displayName = fileName,
             capturedAtMillis = now,
@@ -462,6 +474,13 @@ class MediaStoreSaver(
             height = height,
             mediaType = "PHOTO"
         )
+
+        if (!NetworkConnectivityObserver.isNetworkConnected(context)) {
+            LocationMetadataSyncStore.getInstance(context).recordPendingCaptureMetadata(entity)
+            LocationMetadataSyncScheduler.enqueueWhenConnected(context)
+        }
+
+        return entity
     }
 
     private fun writeExifToUri(uri: Uri, telemetry: GpsTelemetry, config: StampConfig, timestamp: Long) {
@@ -493,7 +512,7 @@ class MediaStoreSaver(
         exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, exifDate)
         exif.setAttribute(ExifInterface.TAG_MAKE, "YVGPSCAM")
         exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL ?: "Android GPS Camera")
-        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "YVGPSCAM 1.0")
+        exif.setAttribute(ExifInterface.TAG_SOFTWARE, "YVGPSCAM ${BuildConfig.VERSION_NAME}")
 
         val descParts = listOfNotNull(
             telemetry.displayHeadlineAddress.takeIf { it.isNotBlank() },
@@ -573,8 +592,8 @@ class MediaStoreSaver(
                     FileNameField.SEQUENCE -> if (config.fnIncludeSequence) {
                         parts.add(config.photoSequenceNumber.coerceAtLeast(1).toString())
                     }
-                    FileNameField.CUSTOM_1 -> if (config.fnIncludeCustom1 && config.fnCustomText1.isNotBlank()) {
-                        parts.add(config.fnCustomText1.trim())
+                    FileNameField.CUSTOM_1 -> {
+                        parts.add(StampConfig.FIXED_BRAND_NAME)
                     }
                     FileNameField.CUSTOM_2 -> if (config.fnIncludeCustom2 && config.fnCustomText2.isNotBlank()) {
                         parts.add(config.fnCustomText2.trim())
@@ -603,14 +622,24 @@ class MediaStoreSaver(
                 }
             }
 
-            val raw = parts.joinToString("_")
+            var raw = parts.joinToString("_")
                 .replace(Regex("[^A-Za-z0-9._-]+"), "_")
                 .replace(Regex("_+"), "_")
                 .trim('_', '.')
-                .take(120)
-                .trimEnd('_', '.')
 
-            return if (raw.isBlank()) "YVGPSCAM_$fallbackStamp.jpg" else "$raw.jpg"
+            if (!raw.contains(StampConfig.FIXED_BRAND_NAME, ignoreCase = true)) {
+                raw = if (raw.isBlank()) {
+                    "${StampConfig.FIXED_BRAND_NAME}_$fallbackStamp"
+                } else {
+                    "${StampConfig.FIXED_BRAND_NAME}_$raw"
+                }
+            }
+            raw = raw.take(120).trimEnd('_', '.')
+            if (!raw.contains(StampConfig.FIXED_BRAND_NAME, ignoreCase = true)) {
+                raw = "${StampConfig.FIXED_BRAND_NAME}_$fallbackStamp"
+            }
+
+            return "$raw.jpg"
         }
     }
 }

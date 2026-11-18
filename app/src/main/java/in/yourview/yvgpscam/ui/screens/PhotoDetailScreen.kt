@@ -12,8 +12,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Fullscreen
@@ -47,6 +51,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -71,7 +76,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -83,9 +88,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -170,6 +178,40 @@ fun PhotoDetailScreen(
     var isFullScreenPhoto by remember { mutableStateOf(false) }
     var showFullScreenChrome by remember { mutableStateOf(true) }
 
+    val zoomByPhotoId = remember { mutableStateMapOf<Long, Float>() }
+    val panByPhotoId = remember { mutableStateMapOf<Long, Offset>() }
+    val viewportSizeByPhotoId = remember { mutableStateMapOf<Long, IntSize>() }
+
+    LaunchedEffect(pagerState.currentPage, isFullScreenPhoto) {
+        val currentId = pagerPhotos.getOrNull(pagerState.currentPage)?.id
+        zoomByPhotoId.keys.filter { it != currentId }.forEach { staleId ->
+            zoomByPhotoId.remove(staleId)
+            panByPhotoId.remove(staleId)
+        }
+    }
+
+    val activeZoom = zoomByPhotoId[activePhotoId] ?: 1f
+    val activeViewportSize = viewportSizeByPhotoId[activePhotoId] ?: IntSize(1080, 1440)
+    val isCurrentPhotoZoomed = activeZoom > 1.05f
+
+    val adjustPhotoZoom: (Long, Float) -> Unit = { targetId, targetScale ->
+        val size = viewportSizeByPhotoId[targetId] ?: IntSize(1080, 1440)
+        val currentScale = zoomByPhotoId[targetId] ?: 1f
+        val currentPan = panByPhotoId[targetId] ?: Offset.Zero
+        val safeTarget = targetScale.coerceIn(1f, 5f)
+        val delta = if (currentScale > 0f) safeTarget / currentScale else safeTarget
+        val (nextScale, nextPan) = computeZoomedTransform(
+            currentScale = currentScale,
+            currentPan = currentPan,
+            zoomDelta = delta,
+            panDelta = Offset.Zero,
+            viewportWidth = size.width.toFloat(),
+            viewportHeight = size.height.toFloat()
+        )
+        zoomByPhotoId[targetId] = nextScale
+        panByPhotoId[targetId] = nextPan
+    }
+
     SystemBarsImmersiveEffect(immersive = isFullScreenPhoto)
     BackHandler(enabled = isFullScreenPhoto || showDetails) {
         if (isFullScreenPhoto) {
@@ -245,7 +287,7 @@ fun PhotoDetailScreen(
 
     if (isFullScreenPhoto) {
         val fullScreenViewer: @Composable () -> Unit = {
-            var currentItemZoomed by remember(currentPhoto.id) { mutableStateOf(false) }
+            val fsZoomActive = (zoomByPhotoId[activePhotoId] ?: 1f) > 1.05f
 
             Box(
                 modifier = Modifier
@@ -256,51 +298,65 @@ fun PhotoDetailScreen(
                 HorizontalPager(
                     state = pagerState,
                     key = { index -> pagerPhotos.getOrNull(index)?.id ?: index },
-                    userScrollEnabled = !currentItemZoomed,
+                    userScrollEnabled = !fsZoomActive,
                     modifier = Modifier.fillMaxSize()
                 ) { pageIndex ->
                     val pagePhoto = pagerPhotos[pageIndex]
-                    var fsZoom by remember(pagePhoto.id) { mutableFloatStateOf(1f) }
-                    var fsPan by remember(pagePhoto.id) { mutableStateOf(Offset.Zero) }
-
-                    LaunchedEffect(fsZoom, pagerState.currentPage) {
-                        if (pagerState.currentPage == pageIndex) {
-                            currentItemZoomed = fsZoom > 1.05f
-                        }
-                    }
+                    val pageZoom = zoomByPhotoId[pagePhoto.id] ?: 1f
+                    val pagePan = panByPhotoId[pagePhoto.id] ?: Offset.Zero
 
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .pointerInput(pagePhoto.id, currentItemZoomed) {
+                            .onSizeChanged { viewportSizeByPhotoId[pagePhoto.id] = it }
+                            .pointerInput(pagePhoto.id, pagePhoto.isVideo) {
                                 detectTapGestures(
                                     onTap = { showFullScreenChrome = !showFullScreenChrome },
                                     onDoubleTap = {
-                                        if (fsZoom > 1.05f) {
-                                            fsZoom = 1f
-                                            fsPan = Offset.Zero
-                                            currentItemZoomed = false
-                                        } else {
-                                            fsZoom = 2.5f
-                                            currentItemZoomed = true
+                                        if (!pagePhoto.isVideo) {
+                                            val cur = zoomByPhotoId[pagePhoto.id] ?: 1f
+                                            adjustPhotoZoom(pagePhoto.id, if (cur > 1.05f) 1f else 2.5f)
                                         }
                                     }
                                 )
                             }
                             .then(
-                                if (fsZoom > 1.05f) {
+                                if (!pagePhoto.isVideo) {
                                     Modifier.pointerInput(pagePhoto.id) {
-                                        detectTransformGestures { _, pan, zoom, _ ->
-                                            val nextScale = (fsZoom * zoom).coerceIn(1f, 5f)
-                                            fsZoom = nextScale
-                                            currentItemZoomed = nextScale > 1.05f
-                                            fsPan = if (nextScale > 1.05f) {
-                                                Offset(
-                                                    x = (fsPan.x + pan.x).coerceIn(-900f, 900f),
-                                                    y = (fsPan.y + pan.y).coerceIn(-900f, 900f)
-                                                )
-                                            } else {
-                                                Offset.Zero
+                                        awaitEachGesture {
+                                            var didZoom = false
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            do {
+                                                val event = awaitPointerEvent()
+                                                val pressedCount = event.changes.count { it.pressed }
+                                                val currentScale = zoomByPhotoId[pagePhoto.id] ?: 1f
+                                                if (pressedCount >= 2 || currentScale > 1.05f) {
+                                                    val zoomDelta = event.calculateZoom()
+                                                    val panDelta = event.calculatePan()
+                                                    if (zoomDelta != 1f || panDelta != Offset.Zero) {
+                                                        val vp = viewportSizeByPhotoId[pagePhoto.id] ?: IntSize(size.width, size.height)
+                                                        val (nextScale, nextPan) = computeZoomedTransform(
+                                                            currentScale = currentScale,
+                                                            currentPan = panByPhotoId[pagePhoto.id] ?: Offset.Zero,
+                                                            zoomDelta = zoomDelta,
+                                                            panDelta = panDelta,
+                                                            viewportWidth = vp.width.toFloat(),
+                                                            viewportHeight = vp.height.toFloat()
+                                                        )
+                                                        zoomByPhotoId[pagePhoto.id] = nextScale
+                                                        panByPhotoId[pagePhoto.id] = nextPan
+                                                        didZoom = true
+                                                        event.changes.forEach { change ->
+                                                            if (change.positionChanged()) {
+                                                                change.consume()
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } while (event.changes.any { it.pressed })
+                                            if (didZoom && (zoomByPhotoId[pagePhoto.id] ?: 1f) <= 1.05f) {
+                                                zoomByPhotoId[pagePhoto.id] = 1f
+                                                panByPhotoId[pagePhoto.id] = Offset.Zero
                                             }
                                         }
                                     }
@@ -317,10 +373,10 @@ fun PhotoDetailScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    scaleX = fsZoom
-                                    scaleY = fsZoom
-                                    translationX = fsPan.x
-                                    translationY = fsPan.y
+                                    scaleX = pageZoom
+                                    scaleY = pageZoom
+                                    translationX = pagePan.x
+                                    translationY = pagePan.y
                                 }
                         )
                         if (pagePhoto.isVideo) {
@@ -414,21 +470,38 @@ fun PhotoDetailScreen(
                         .navigationBarsPadding()
                         .padding(bottom = 16.dp)
                 ) {
-                    Surface(
-                        color = Color.Black.copy(alpha = 0.65f),
-                        shape = RoundedCornerShape(12.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = if (pagerPhotos.size > 1) {
-                                "Swipe to switch • Double-tap to zoom • Tap to hide"
-                            } else {
-                                "Double-tap to zoom • Tap to hide controls"
-                            },
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 10.sp,
-                            color = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
+                        if (!currentPhoto.isVideo) {
+                            ZoomControlsPill(
+                                currentZoom = activeZoom,
+                                onZoomOut = { adjustPhotoZoom(activePhotoId, activeZoom - 0.75f) },
+                                onResetZoom = { adjustPhotoZoom(activePhotoId, 1f) },
+                                onZoomIn = { adjustPhotoZoom(activePhotoId, activeZoom + 0.75f) },
+                                zoomOutTestTag = "fullscreen_zoom_out_button",
+                                zoomResetTestTag = "fullscreen_zoom_reset_button",
+                                zoomInTestTag = "fullscreen_zoom_in_button"
+                            )
+                        }
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.65f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = when {
+                                    currentPhoto.isVideo -> "Tap play to open video • Tap screen to hide"
+                                    activeZoom > 1.05f -> "Drag to pan • Pinch or double-tap to reset"
+                                    pagerPhotos.size > 1 -> "Pinch or double-tap to zoom • Swipe to switch"
+                                    else -> "Pinch or double-tap to zoom • Tap to hide controls"
+                                },
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -554,32 +627,94 @@ fun PhotoDetailScreen(
             HorizontalPager(
                 state = pagerState,
                 key = { index -> pagerPhotos.getOrNull(index)?.id ?: index },
+                userScrollEnabled = !isCurrentPhotoZoomed,
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("photo_detail_horizontal_pager")
             ) { pageIndex ->
                 val pagePhoto = pagerPhotos[pageIndex]
+                val pageZoom = zoomByPhotoId[pagePhoto.id] ?: 1f
+                val pagePan = panByPhotoId[pagePhoto.id] ?: Offset.Zero
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(pagePhoto.id) {
+                        .onSizeChanged { viewportSizeByPhotoId[pagePhoto.id] = it }
+                        .pointerInput(pagePhoto.id, pagePhoto.isVideo) {
                             detectTapGestures(
                                 onTap = {
                                     if (pagePhoto.isVideo) {
                                         openVideoExternally(pagePhoto)
-                                    } else {
+                                    } else if ((zoomByPhotoId[pagePhoto.id] ?: 1f) <= 1.05f) {
                                         isFullScreenPhoto = true
+                                    }
+                                },
+                                onDoubleTap = {
+                                    if (!pagePhoto.isVideo) {
+                                        val cur = zoomByPhotoId[pagePhoto.id] ?: 1f
+                                        adjustPhotoZoom(pagePhoto.id, if (cur > 1.05f) 1f else 2.5f)
                                     }
                                 }
                             )
-                        },
+                        }
+                        .then(
+                            if (!pagePhoto.isVideo) {
+                                Modifier.pointerInput(pagePhoto.id) {
+                                    awaitEachGesture {
+                                        var didZoom = false
+                                        awaitFirstDown(requireUnconsumed = false)
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            val pressedCount = event.changes.count { it.pressed }
+                                            val currentScale = zoomByPhotoId[pagePhoto.id] ?: 1f
+                                            if (pressedCount >= 2 || currentScale > 1.05f) {
+                                                val zoomDelta = event.calculateZoom()
+                                                val panDelta = event.calculatePan()
+                                                if (zoomDelta != 1f || panDelta != Offset.Zero) {
+                                                    val vp = viewportSizeByPhotoId[pagePhoto.id] ?: IntSize(size.width, size.height)
+                                                    val (nextScale, nextPan) = computeZoomedTransform(
+                                                        currentScale = currentScale,
+                                                        currentPan = panByPhotoId[pagePhoto.id] ?: Offset.Zero,
+                                                        zoomDelta = zoomDelta,
+                                                        panDelta = panDelta,
+                                                        viewportWidth = vp.width.toFloat(),
+                                                        viewportHeight = vp.height.toFloat()
+                                                    )
+                                                    zoomByPhotoId[pagePhoto.id] = nextScale
+                                                    panByPhotoId[pagePhoto.id] = nextPan
+                                                    didZoom = true
+                                                    event.changes.forEach { change ->
+                                                        if (change.positionChanged()) {
+                                                            change.consume()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } while (event.changes.any { it.pressed })
+                                        if (didZoom && (zoomByPhotoId[pagePhoto.id] ?: 1f) <= 1.05f) {
+                                            zoomByPhotoId[pagePhoto.id] = 1f
+                                            panByPhotoId[pagePhoto.id] = Offset.Zero
+                                        }
+                                    }
+                                }
+                            } else {
+                                Modifier
+                            }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
                         model = pagePhoto.mediaUri,
                         contentDescription = pagePhoto.displayName,
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = pageZoom
+                                scaleY = pageZoom
+                                translationX = pagePan.x
+                                translationY = pagePan.y
+                            }
                     )
 
                     if (pagePhoto.isVideo) {
@@ -601,7 +736,7 @@ fun PhotoDetailScreen(
                 }
             }
 
-            if (pagerPhotos.size > 1) {
+            if (pagerPhotos.size > 1 && !isCurrentPhotoZoomed) {
                 if (pagerState.currentPage > 0) {
                     IconButton(
                         onClick = {
@@ -610,7 +745,7 @@ fun PhotoDetailScreen(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
                             .padding(start = 4.dp)
-                            .size(40.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.42f))
                             .testTag("detail_prev_photo_button")
@@ -631,7 +766,7 @@ fun PhotoDetailScreen(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .padding(end = 4.dp)
-                            .size(40.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.42f))
                             .testTag("detail_next_photo_button")
@@ -645,24 +780,35 @@ fun PhotoDetailScreen(
                 }
             }
 
-            Surface(
-                color = Color.Black.copy(alpha = 0.62f),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = if (pagerPhotos.size > 1) {
-                        "Swipe left/right • Tap for full screen"
-                    } else {
-                        "Tap for full screen"
-                    },
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 10.sp,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            if (!currentPhoto.isVideo) {
+                ZoomControlsPill(
+                    currentZoom = activeZoom,
+                    onZoomOut = { adjustPhotoZoom(activePhotoId, activeZoom - 0.75f) },
+                    onResetZoom = { adjustPhotoZoom(activePhotoId, 1f) },
+                    onZoomIn = { adjustPhotoZoom(activePhotoId, activeZoom + 0.75f) },
+                    zoomOutTestTag = "detail_zoom_out_button",
+                    zoomResetTestTag = "detail_zoom_reset_button",
+                    zoomInTestTag = "detail_zoom_in_button",
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(10.dp)
                 )
+            } else {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.62f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(10.dp)
+                ) {
+                    Text(
+                        text = "Tap video to play",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             IconButton(
@@ -670,7 +816,7 @@ fun PhotoDetailScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(Color(0xAA0C1119))
                     .border(0.9.dp, TelemetryEmerald.copy(alpha = 0.65f), CircleShape)
@@ -1007,3 +1153,107 @@ private fun ExifRow(label: String, value: String) {
         )
     }
 }
+
+@Composable
+private fun ZoomControlsPill(
+    currentZoom: Float,
+    onZoomOut: () -> Unit,
+    onResetZoom: () -> Unit,
+    onZoomIn: () -> Unit,
+    zoomOutTestTag: String,
+    zoomResetTestTag: String,
+    zoomInTestTag: String,
+    modifier: Modifier = Modifier
+) {
+    val canZoomOut = currentZoom > 1.02f
+    val canZoomIn = currentZoom < 4.98f
+    Surface(
+        color = Color(0xCC0C1119),
+        shape = CircleShape,
+        modifier = modifier
+            .border(0.9.dp, TelemetryEmerald.copy(alpha = 0.55f), CircleShape)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+        ) {
+            IconButton(
+                onClick = onZoomOut,
+                enabled = canZoomOut,
+                modifier = Modifier
+                    .size(44.dp)
+                    .testTag(zoomOutTestTag)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Remove,
+                    contentDescription = "Zoom out photo",
+                    tint = if (canZoomOut) Color.White else Color.White.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Surface(
+                onClick = onResetZoom,
+                enabled = canZoomOut,
+                color = if (canZoomOut) ShutterGold.copy(alpha = 0.22f) else Color.Transparent,
+                shape = CircleShape,
+                modifier = Modifier
+                    .height(36.dp)
+                    .testTag(zoomResetTestTag)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 10.dp)
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "%.1fx", currentZoom),
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (canZoomOut) ShutterGold else Color.White
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onZoomIn,
+                enabled = canZoomIn,
+                modifier = Modifier
+                    .size(44.dp)
+                    .testTag(zoomInTestTag)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Zoom in photo",
+                    tint = if (canZoomIn) TelemetryEmerald else TelemetryEmerald.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+internal fun computeZoomedTransform(
+    currentScale: Float,
+    currentPan: Offset,
+    zoomDelta: Float,
+    panDelta: Offset,
+    viewportWidth: Float,
+    viewportHeight: Float,
+    minScale: Float = 1f,
+    maxScale: Float = 5f
+): Pair<Float, Offset> {
+    val safeMin = minScale.coerceAtLeast(1f)
+    val safeMax = maxScale.coerceAtLeast(safeMin)
+    val nextScale = (currentScale * zoomDelta).coerceIn(safeMin, safeMax)
+    if (nextScale <= 1.02f) {
+        return 1f to Offset.Zero
+    }
+    val maxOffsetX = (viewportWidth.coerceAtLeast(1f) * (nextScale - 1f)) / 2f
+    val maxOffsetY = (viewportHeight.coerceAtLeast(1f) * (nextScale - 1f)) / 2f
+    val nextX = (currentPan.x + panDelta.x).coerceIn(-maxOffsetX, maxOffsetX)
+    val nextY = (currentPan.y + panDelta.y).coerceIn(-maxOffsetY, maxOffsetY)
+    return nextScale to Offset(nextX, nextY)
+}
+

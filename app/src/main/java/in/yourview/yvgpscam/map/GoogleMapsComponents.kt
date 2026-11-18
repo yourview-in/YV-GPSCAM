@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import `in`.yourview.yvgpscam.BuildConfig
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
+import `in`.yourview.yvgpscam.data.local.AppDatabase
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
 import `in`.yourview.yvgpscam.data.model.MapStyle
@@ -64,7 +67,16 @@ import `in`.yourview.yvgpscam.ui.theme.ObsidianBorder
 import `in`.yourview.yvgpscam.ui.theme.ObsidianSurface
 import `in`.yourview.yvgpscam.ui.theme.ObsidianSurfaceHigh
 import `in`.yourview.yvgpscam.ui.theme.TelemetryEmerald
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.TileOverlay
+import com.google.maps.android.compose.rememberCameraPositionState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -83,6 +95,77 @@ fun MapStyle.toGoogleMapType(): MapType = when (this) {
     MapStyle.SATELLITE -> MapType.SATELLITE
     MapStyle.TERRAIN -> MapType.TERRAIN
     MapStyle.HYBRID -> MapType.HYBRID
+}
+
+@Composable
+fun rememberDiskCachedMapTileProvider(
+    mapStyle: MapStyle,
+    offlineOnlyMapMode: Boolean
+): DiskCachedMapTileProvider {
+    val context = LocalContext.current.applicationContext
+    val offlineRepo = remember(context) {
+        OfflineMapRepository(
+            context = context,
+            regionDao = AppDatabase.getInstance(context).offlineRegionDao()
+        )
+    }
+    return remember(offlineRepo, mapStyle, offlineOnlyMapMode) {
+        DiskCachedMapTileProvider(
+            offlineMapRepository = offlineRepo,
+            mapStyle = mapStyle,
+            allowNetwork = {
+                !offlineOnlyMapMode && NetworkConnectivityObserver.isNetworkConnected(context) &&
+                    offlineRepo.isNetworkUsableForTiles()
+            }
+        )
+    }
+}
+
+/**
+ * Native Google Maps SDK map surface augmented with [DiskCachedMapTileProvider] as a [TileOverlay]
+ * so previously visited areas and offline-cached regions render seamlessly even if connectivity drops.
+ */
+@Composable
+fun GoogleSdkCachedTileMap(
+    latitude: Double,
+    longitude: Double,
+    zoom: Float = 15f,
+    mapStyle: MapStyle = MapStyle.STANDARD,
+    offlineOnlyMapMode: Boolean = false,
+    markerTitle: String? = null,
+    modifier: Modifier = Modifier
+) {
+    val tileProvider = rememberDiskCachedMapTileProvider(
+        mapStyle = mapStyle,
+        offlineOnlyMapMode = offlineOnlyMapMode
+    )
+    val targetLatLng = remember(latitude, longitude) { LatLng(latitude, longitude) }
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(targetLatLng, zoom)
+    }
+    GoogleMap(
+        modifier = modifier.fillMaxSize(),
+        cameraPositionState = cameraPositionState,
+        properties = MapProperties(
+            mapType = if (offlineOnlyMapMode) MapType.NONE else mapStyle.toGoogleMapType()
+        ),
+        uiSettings = MapUiSettings(
+            zoomControlsEnabled = true,
+            compassEnabled = true
+        )
+    ) {
+        TileOverlay(
+            tileProvider = tileProvider,
+            fadeIn = false,
+            zIndex = 1f
+        )
+        if (!markerTitle.isNullOrBlank()) {
+            Marker(
+                state = MarkerState(position = targetLatLng),
+                title = markerTitle
+            )
+        }
+    }
 }
 
 @Composable

@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.math.abs
 
 class LocationTelemetryManager(private val context: Context) {
@@ -77,6 +78,7 @@ class LocationTelemetryManager(private val context: Context) {
     private var lastWeatherFetchedAtMillis: Long = 0L
     private var currentFusedCancellation: CancellationTokenSource? = null
     private var currentNativeCancellation: CancellationSignal? = null
+    private val locationUpdatesListeners = CopyOnWriteArraySet<LocationUpdatesListener>()
 
     private val gravityReading = FloatArray(3)
     private val magnetReading = FloatArray(3)
@@ -302,24 +304,30 @@ class LocationTelemetryManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun seedFromLastKnownLocation() {
-        val mgr = systemLocationManager ?: return
+        val mgr = systemLocationManager
         val candidates = mutableListOf<Location>()
-        val providers = buildList {
-            add(LocationManager.GPS_PROVIDER)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(LocationManager.FUSED_PROVIDER)
+        if (mgr != null) {
+            val providers = buildList {
+                add(LocationManager.GPS_PROVIDER)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    add(LocationManager.FUSED_PROVIDER)
+                }
+                add(LocationManager.NETWORK_PROVIDER)
+                add(LocationManager.PASSIVE_PROVIDER)
             }
-            add(LocationManager.NETWORK_PROVIDER)
-            add(LocationManager.PASSIVE_PROVIDER)
-        }
-        for (provider in providers) {
-            runCatching {
-                if (mgr.allProviders.contains(provider)) {
-                    mgr.getLastKnownLocation(provider)?.let { candidates.add(it) }
+            for (provider in providers) {
+                runCatching {
+                    if (mgr.allProviders.contains(provider)) {
+                        mgr.getLastKnownLocation(provider)?.let { candidates.add(it) }
+                    }
                 }
             }
         }
-        candidates.forEach { loc -> handleNewLocation(loc) }
+        if (candidates.isNotEmpty()) {
+            candidates.forEach { loc -> handleNewLocation(loc) }
+        } else if (bestCurrentLocation == null) {
+            loadRecentPersistedLocationFallback()?.let { handleNewLocation(it) }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -336,9 +344,10 @@ class LocationTelemetryManager(private val context: Context) {
         for (provider in providers) {
             runCatching {
                 if (mgr.allProviders.contains(provider)) {
+                    val minTimeMs = if (provider == LocationManager.GPS_PROVIDER) 1000L else 1500L
                     mgr.requestLocationUpdates(
                         provider,
-                        1500L,
+                        minTimeMs,
                         0f,
                         nativeLocationListener,
                         Looper.getMainLooper()
@@ -401,12 +410,49 @@ class LocationTelemetryManager(private val context: Context) {
         handleNewLocation(location)
     }
 
+    fun addLocationUpdatesListener(listener: LocationUpdatesListener) {
+        locationUpdatesListeners.add(listener)
+        bestCurrentLocation?.let { listener.onLocationChanged(it) }
+    }
+
+    fun removeLocationUpdatesListener(listener: LocationUpdatesListener) {
+        locationUpdatesListeners.remove(listener)
+    }
+
+    fun onNetworkRestored(hasLocationPermission: Boolean) {
+        val currentLoc = bestCurrentLocation
+        if (currentLoc != null) {
+            val prevGeocoded = lastGeocodedLocation
+            if (prevGeocoded == null || prevGeocoded.distanceTo(currentLoc) > 35f) {
+                reverseGeocode(currentLoc)
+            }
+            val now = System.currentTimeMillis()
+            val prevWeatherLoc = lastWeatherLocation
+            val movedFar = prevWeatherLoc == null || prevWeatherLoc.distanceTo(currentLoc) > 2000f
+            val staleWeather = (now - lastWeatherFetchedAtMillis) > 15 * 60 * 1000L
+            if (movedFar || staleWeather) {
+                lastWeatherLocation = currentLoc
+                lastWeatherFetchedAtMillis = now
+                fetchWeatherInBackground(currentLoc.latitude, currentLoc.longitude)
+            }
+        } else if (hasLocationPermission) {
+            refreshLocationNow(hasLocationPermission = true)
+        }
+    }
+
     private fun handleNewLocation(location: Location) {
         val currentBest = bestCurrentLocation
         if (!isBetterLocation(location, currentBest)) return
         bestCurrentLocation = location
+        if (location.provider != PROVIDER_PERSISTED_CACHE) {
+            persistLastValidCoordinates(location)
+        }
+        locationUpdatesListeners.forEach { listener ->
+            listener.onLocationChanged(location)
+        }
 
         val signalState = when {
+            location.provider == PROVIDER_PERSISTED_CACHE -> GpsSignalState.COARSE
             location.hasAccuracy() && location.accuracy <= 35f -> GpsSignalState.LOCKED
             location.provider == LocationManager.GPS_PROVIDER -> GpsSignalState.LOCKED
             else -> GpsSignalState.COARSE
@@ -417,13 +463,13 @@ class LocationTelemetryManager(private val context: Context) {
         val bearing = if (location.hasBearing()) location.bearing else null
         val providerName = location.provider.orEmpty().uppercase(Locale.US)
 
-        // Reuse cached nearby address when offline, or clear distant stale street text
+        // Reuse cached nearby address when offline; preserve regional city/country up to 5km while clearing distant street
         val cachedAddress = loadCachedAddressNear(location)
 
         _telemetry.update { prevState ->
-            val keepCurrentAddress = lastGeocodedLocation?.let {
-                it.distanceTo(location) <= OFFLINE_ADDRESS_REUSE_METERS
-            } ?: false
+            val distFromLastGeocoded = lastGeocodedLocation?.distanceTo(location)
+            val keepStreetAddress = distFromLastGeocoded != null && distFromLastGeocoded <= OFFLINE_ADDRESS_REUSE_METERS
+            val keepRegionAddress = distFromLastGeocoded != null && distFromLastGeocoded <= OFFLINE_REGION_REUSE_METERS
 
             prevState.copy(
                 latitude = location.latitude,
@@ -436,28 +482,28 @@ class LocationTelemetryManager(private val context: Context) {
                 lastUpdatedMillis = System.currentTimeMillis(),
                 provider = providerName,
                 addressLine = when {
-                    keepCurrentAddress && prevState.addressLine.isNotBlank() -> prevState.addressLine
-                    cachedAddress != null -> cachedAddress.addressLine
+                    keepStreetAddress && prevState.addressLine.isNotBlank() -> prevState.addressLine
+                    cachedAddress != null && cachedAddress.addressLine.isNotBlank() -> cachedAddress.addressLine
                     else -> ""
                 },
                 cityState = when {
-                    keepCurrentAddress && prevState.cityState.isNotBlank() -> prevState.cityState
+                    keepRegionAddress && prevState.cityState.isNotBlank() -> prevState.cityState
                     cachedAddress != null -> cachedAddress.cityState
                     else -> ""
                 },
                 country = when {
-                    keepCurrentAddress && prevState.country.isNotBlank() -> prevState.country
+                    keepRegionAddress && prevState.country.isNotBlank() -> prevState.country
                     cachedAddress != null -> cachedAddress.country
                     else -> ""
                 },
                 countryCode = when {
-                    keepCurrentAddress && prevState.countryCode.isNotBlank() -> prevState.countryCode
+                    keepRegionAddress && prevState.countryCode.isNotBlank() -> prevState.countryCode
                     cachedAddress != null -> cachedAddress.countryCode
                     else -> ""
                 },
                 postalCode = when {
-                    keepCurrentAddress && prevState.postalCode.isNotBlank() -> prevState.postalCode
-                    cachedAddress != null -> cachedAddress.postalCode
+                    keepStreetAddress && prevState.postalCode.isNotBlank() -> prevState.postalCode
+                    cachedAddress != null && cachedAddress.postalCode.isNotBlank() -> cachedAddress.postalCode
                     else -> ""
                 }
             )
@@ -513,11 +559,20 @@ class LocationTelemetryManager(private val context: Context) {
         val geocoder = Geocoder(context, Locale.getDefault())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             runCatching {
-                geocoder.getFromLocation(location.latitude, location.longitude, 1) { addresses ->
-                    addresses.firstOrNull()?.let { addr ->
-                        applyAddress(addr, location)
+                geocoder.getFromLocation(
+                    location.latitude,
+                    location.longitude,
+                    1,
+                    object : Geocoder.GeocodeListener {
+                        override fun onGeocode(addresses: MutableList<android.location.Address>) {
+                            addresses.firstOrNull()?.let { addr ->
+                                applyAddress(addr, location)
+                            }
+                        }
+
+                        override fun onError(errorMessage: String?) = Unit
                     }
-                }
+                )
             }
         } else {
             scope.launch {
@@ -567,6 +622,35 @@ class LocationTelemetryManager(private val context: Context) {
         val postalCode: String
     )
 
+    private fun persistLastValidCoordinates(loc: Location) {
+        val editor = addressCachePrefs.edit()
+            .putString(KEY_LAST_FIX_LAT, loc.latitude.toString())
+            .putString(KEY_LAST_FIX_LON, loc.longitude.toString())
+            .putLong(KEY_LAST_FIX_TIME, loc.time.takeIf { it > 0L } ?: System.currentTimeMillis())
+        if (loc.hasAltitude()) {
+            editor.putString(KEY_LAST_FIX_ALT, loc.altitude.toString())
+        }
+        editor.apply()
+    }
+
+    private fun loadRecentPersistedLocationFallback(): Location? {
+        val lat = addressCachePrefs.getString(KEY_LAST_FIX_LAT, null)?.toDoubleOrNull() ?: return null
+        val lon = addressCachePrefs.getString(KEY_LAST_FIX_LON, null)?.toDoubleOrNull() ?: return null
+        val fixTime = addressCachePrefs.getLong(KEY_LAST_FIX_TIME, 0L)
+        if (fixTime <= 0L || (System.currentTimeMillis() - fixTime) > PERSISTED_FIX_MAX_AGE_MS) {
+            return null
+        }
+        return Location(PROVIDER_PERSISTED_CACHE).apply {
+            latitude = lat
+            longitude = lon
+            accuracy = 60f
+            time = fixTime
+            addressCachePrefs.getString(KEY_LAST_FIX_ALT, null)?.toDoubleOrNull()?.let {
+                altitude = it
+            }
+        }
+    }
+
     private fun saveCachedAddress(
         loc: Location,
         street: String,
@@ -593,22 +677,38 @@ class LocationTelemetryManager(private val context: Context) {
             latitude = lat
             longitude = lon
         }
-        if (cachedLoc.distanceTo(loc) > OFFLINE_ADDRESS_REUSE_METERS) return null
-        val street = addressCachePrefs.getString(KEY_STREET, "").orEmpty()
+        val distanceMeters = cachedLoc.distanceTo(loc)
+        if (distanceMeters > OFFLINE_REGION_REUSE_METERS) return null
+        val withinStreetRadius = distanceMeters <= OFFLINE_ADDRESS_REUSE_METERS
+        val street = if (withinStreetRadius) addressCachePrefs.getString(KEY_STREET, "").orEmpty() else ""
         val city = addressCachePrefs.getString(KEY_CITY, "").orEmpty()
         val country = addressCachePrefs.getString(KEY_COUNTRY, "").orEmpty()
-        if (street.isBlank() && city.isBlank()) return null
+        val postal = if (withinStreetRadius) addressCachePrefs.getString(KEY_POSTAL, "").orEmpty() else ""
+        if (street.isBlank() && city.isBlank() && country.isBlank()) return null
         return CachedGeoAddress(
             addressLine = street,
             cityState = city,
             country = country,
             countryCode = addressCachePrefs.getString(KEY_CODE, "").orEmpty(),
-            postalCode = addressCachePrefs.getString(KEY_POSTAL, "").orEmpty()
+            postalCode = postal
         )
+    }
+
+    @VisibleForTesting
+    internal fun saveCachedAddressForTest(
+        loc: Location,
+        street: String,
+        cityState: String,
+        country: String,
+        countryCode: String = "",
+        postal: String = ""
+    ) {
+        saveCachedAddress(loc, street, cityState, country, countryCode, postal)
     }
 
     companion object {
         private const val ADDRESS_CACHE_PREFS = "yvgpscam_last_address"
+        private const val PROVIDER_PERSISTED_CACHE = "last_known"
         private const val KEY_LAT = "lat"
         private const val KEY_LON = "lon"
         private const val KEY_STREET = "street"
@@ -616,8 +716,15 @@ class LocationTelemetryManager(private val context: Context) {
         private const val KEY_COUNTRY = "country"
         private const val KEY_CODE = "country_code"
         private const val KEY_POSTAL = "postal"
+        private const val KEY_LAST_FIX_LAT = "last_fix_lat"
+        private const val KEY_LAST_FIX_LON = "last_fix_lon"
+        private const val KEY_LAST_FIX_ALT = "last_fix_alt"
+        private const val KEY_LAST_FIX_TIME = "last_fix_time"
+        private const val PERSISTED_FIX_MAX_AGE_MS = 60 * 60 * 1000L
         private const val OFFLINE_ADDRESS_REUSE_METERS = 300f
+        private const val OFFLINE_REGION_REUSE_METERS = 5000f
         private const val TWO_MINUTES_MS = 120_000L
+        private const val STALE_FIX_OVERRIDE_MS = 20_000L
 
         fun isBetterLocation(candidate: Location, currentBest: Location?): Boolean {
             if (currentBest == null) return true
@@ -636,11 +743,14 @@ class LocationTelemetryManager(private val context: Context) {
             val isSignificantlyLessAccurate = accuracyDelta > 150
             val isFromSameProvider = candidate.provider == currentBest.provider
             val isGpsCandidate = candidate.provider == LocationManager.GPS_PROVIDER
+            val currentIsNetwork = currentBest.provider == LocationManager.NETWORK_PROVIDER
 
             return when {
                 isMoreAccurate -> true
                 isNewer && !isLessAccurate -> true
                 isNewer && isGpsCandidate && !isSignificantlyLessAccurate -> true
+                timeDelta > STALE_FIX_OVERRIDE_MS && (!isSignificantlyLessAccurate || candidate.accuracy <= 65f) -> true
+                isNewer && currentIsNetwork && !isGpsCandidate && candidate.accuracy <= 50f -> true
                 isNewer && !isSignificantlyLessAccurate && isFromSameProvider -> true
                 else -> false
             }

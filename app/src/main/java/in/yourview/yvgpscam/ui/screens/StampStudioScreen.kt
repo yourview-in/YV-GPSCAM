@@ -534,17 +534,33 @@ fun StampStudioScreen(
                                     .padding(start = 34.dp, end = 6.dp, bottom = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = config.customBrandLabel,
-                                    onValueChange = { label ->
-                                        viewModel.updateStampConfig { it.copy(customBrandLabel = label.take(24)) }
-                                    },
-                                    label = { Text("Stamp Brand Title") },
-                                    singleLine = true,
+                                Surface(
+                                    color = ShutterGold.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .testTag("brand_title_input")
-                                )
+                                        .border(1.dp, ShutterGold.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+                                        .testTag("brand_title_locked_badge")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Fixed brand",
+                                            tint = ShutterGold,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Fixed Stamp Brand: YVGPSCAM",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = ShutterGold
+                                        )
+                                    }
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween

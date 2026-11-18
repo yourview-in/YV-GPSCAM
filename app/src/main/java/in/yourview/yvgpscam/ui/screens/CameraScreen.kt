@@ -89,6 +89,7 @@ import androidx.compose.material.icons.rounded.FlipCameraAndroid
 import androidx.compose.material.icons.rounded.GpsOff
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LocationSearching
 import androidx.compose.material.icons.rounded.MotionPhotosAuto
 import androidx.compose.material.icons.rounded.MyLocation
@@ -352,7 +353,6 @@ fun CameraScreen(
 
     var showNoteDialog by remember { mutableStateOf(false) }
     var noteDraft by remember(stampConfig.customNote) { mutableStateOf(stampConfig.customNote) }
-    var brandDraft by remember(stampConfig.customBrandLabel) { mutableStateOf(stampConfig.customBrandLabel) }
     var shutterFlash by remember { mutableStateOf(false) }
     var focusReticle by remember { mutableStateOf<FocusReticleState?>(null) }
     var focusSequence by remember { mutableIntStateOf(0) }
@@ -1957,20 +1957,40 @@ fun CameraScreen(
         floatingToolsOverlay()
     }
 
-    // Quick Note & Brand Label Dialog
+    // Quick Note Dialog (Brand label stays permanently locked to YVGPSCAM)
     if (showNoteDialog) {
         AlertDialog(
             onDismissRequest = { showNoteDialog = false },
-            title = { Text("Stamp Note & Brand Label") },
+            title = { Text("Stamp Note") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = brandDraft,
-                        onValueChange = { brandDraft = it.take(24) },
-                        label = { Text("Brand Label") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Surface(
+                        color = ShutterGold.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, ShutterGold.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                            .testTag("camera_locked_brand_badge")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Lock,
+                                contentDescription = "Fixed brand",
+                                tint = ShutterGold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Brand Watermark: ${`in`.yourview.yvgpscam.data.model.StampConfig.FIXED_BRAND_NAME} (Fixed)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ShutterGold
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = noteDraft,
                         onValueChange = { noteDraft = it.take(80) },
@@ -1987,7 +2007,7 @@ fun CameraScreen(
                     onClick = {
                         viewModel.updateStampConfig {
                             it.copy(
-                                customBrandLabel = brandDraft.trim().ifBlank { "YVGPSCAM" },
+                                customBrandLabel = `in`.yourview.yvgpscam.data.model.StampConfig.FIXED_BRAND_NAME,
                                 customNote = noteDraft.trim()
                             )
                         }

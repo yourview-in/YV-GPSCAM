@@ -8,6 +8,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import `in`.yourview.yvgpscam.camera.MediaStoreSaver
+import `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.local.PhotoRepository
 import `in`.yourview.yvgpscam.data.local.StampPreferencesRepository
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
@@ -21,7 +23,9 @@ import `in`.yourview.yvgpscam.data.model.StampPosition
 import `in`.yourview.yvgpscam.data.model.StampTemplate
 import `in`.yourview.yvgpscam.data.model.VolumeButtonAction
 import `in`.yourview.yvgpscam.map.MiniMapTileRenderer
+import `in`.yourview.yvgpscam.map.OfflineMapRepository
 import `in`.yourview.yvgpscam.sensors.LocationTelemetryManager
+import `in`.yourview.yvgpscam.sensors.LocationUpdatesListener
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 import kotlin.math.abs
@@ -75,12 +80,28 @@ data class CameraHudState(
     val statusMessage: String? = null
 )
 
+enum class CameraConnectivitySyncMode {
+    ONLINE_SYNCED,
+    SYNC_PENDING,
+    OFFLINE_MODE
+}
+
+data class CameraSyncIndicatorState(
+    val mode: CameraConnectivitySyncMode = CameraConnectivitySyncMode.ONLINE_SYNCED,
+    val pendingCount: Int = 0,
+    val isOnline: Boolean = true,
+    val isOfflineOnlyMapMode: Boolean = false,
+    val isSyncing: Boolean = false
+)
+
 class CameraViewModel(
     private val locationManager: LocationTelemetryManager,
     private val stampPrefs: StampPreferencesRepository,
     private val photoRepository: PhotoRepository,
     private val miniMapRenderer: MiniMapTileRenderer,
-    private val mediaStoreSaver: MediaStoreSaver
+    private val mediaStoreSaver: MediaStoreSaver,
+    private val connectivityObserver: NetworkConnectivityObserver? = null,
+    private val locationSyncStore: LocationMetadataSyncStore? = null
 ) : ViewModel() {
 
     val liveGpsTelemetry: StateFlow<GpsTelemetry> = locationManager.telemetry
@@ -135,18 +156,70 @@ class CameraViewModel(
     private val _postCaptureEvent = MutableSharedFlow<CapturedPhotoEntity>(extraBufferCapacity = 4)
     val postCaptureEvent: SharedFlow<CapturedPhotoEntity> = _postCaptureEvent.asSharedFlow()
 
+    private val _miniMapRefreshCount = MutableStateFlow(0L)
+    val miniMapRefreshCount: StateFlow<Long> = _miniMapRefreshCount.asStateFlow()
+
+    private val _miniMapThresholdEvents = MutableStateFlow(0L)
+
+    private val _fallbackOnlineState = MutableStateFlow(true)
+    private val isOnlineFlow: StateFlow<Boolean> = connectivityObserver?.isOnline ?: _fallbackOnlineState.asStateFlow()
+    private val pendingCountFlow: StateFlow<Int> = locationSyncStore?.pendingCountFlow ?: MutableStateFlow(0).asStateFlow()
+    private val isSyncingFlow: StateFlow<Boolean> = locationSyncStore?.isSyncingFlow ?: MutableStateFlow(false).asStateFlow()
+
+    val offlineSyncUiState: StateFlow<CameraSyncIndicatorState> = combine(
+        isOnlineFlow,
+        stampConfig,
+        pendingCountFlow,
+        isSyncingFlow
+    ) { online, cfg, pendingCount, isSyncing ->
+        val mode = when {
+            !online || cfg.offlineOnlyMapMode -> CameraConnectivitySyncMode.OFFLINE_MODE
+            pendingCount > 0 || isSyncing -> CameraConnectivitySyncMode.SYNC_PENDING
+            else -> CameraConnectivitySyncMode.ONLINE_SYNCED
+        }
+        CameraSyncIndicatorState(
+            mode = mode,
+            pendingCount = pendingCount,
+            isOnline = online,
+            isOfflineOnlyMapMode = cfg.offlineOnlyMapMode,
+            isSyncing = isSyncing
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = CameraSyncIndicatorState(
+            mode = if (isOnlineFlow.value) CameraConnectivitySyncMode.ONLINE_SYNCED else CameraConnectivitySyncMode.OFFLINE_MODE,
+            pendingCount = pendingCountFlow.value,
+            isOnline = isOnlineFlow.value,
+            isSyncing = isSyncingFlow.value
+        )
+    )
+
     private var lastRenderedLat: Double? = null
     private var lastRenderedLon: Double? = null
     private var lastRenderedStyleKey: String? = null
+    private var lastPrewarmedTileKey: String? = null
+
+    private val miniMapLocationUpdatesListener = LocationUpdatesListener(
+        minDisplacementMeters = LocationUpdatesListener.DEFAULT_MIN_DISPLACEMENT_METERS
+    ) { _, _, _ ->
+        _miniMapThresholdEvents.update { it + 1L }
+    }
 
     init {
+        locationManager.addLocationUpdatesListener(miniMapLocationUpdatesListener)
+
         viewModelScope.launch {
-            combine(telemetry, stampConfig) { tel, cfg -> tel to cfg }
+            combine(telemetry, stampConfig, _miniMapThresholdEvents) { tel, cfg, _ -> tel to cfg }
                 .collectLatest { (tel, cfg) ->
                     val styleKey = "${cfg.mapStyle}_${cfg.offlineOnlyMapMode}_${cfg.accentColor}_${cfg.template}_${cfg.layoutTemplate}"
-                    val latChanged = tel.latitude != null && lastRenderedLat?.let { abs(it - tel.latitude) > 0.00025 } != false
-                    val lonChanged = tel.longitude != null && lastRenderedLon?.let { abs(it - tel.longitude) > 0.00025 } != false
-                    if (_miniMapBitmap.value == null || latChanged || lonChanged || styleKey != lastRenderedStyleKey) {
+                    val movedBeyondThreshold = hasMovedBeyondMiniMapThreshold(
+                        lastLat = lastRenderedLat,
+                        lastLon = lastRenderedLon,
+                        newLat = tel.latitude,
+                        newLon = tel.longitude
+                    )
+                    if (_miniMapBitmap.value == null || movedBeyondThreshold || styleKey != lastRenderedStyleKey) {
                         lastRenderedLat = tel.latitude
                         lastRenderedLon = tel.longitude
                         lastRenderedStyleKey = styleKey
@@ -162,9 +235,51 @@ class CameraViewModel(
                                 cfg.layoutTemplate == StampLayoutTemplate.CLASSIC
                         )
                         _miniMapBitmap.value = bmp
+                        _miniMapRefreshCount.update { it + 1L }
+
+                        val lat = tel.latitude
+                        val lon = tel.longitude
+                        if (lat != null && lon != null && !cfg.offlineOnlyMapMode && isOnlineFlow.value) {
+                            val tileX = OfflineMapRepository.lonToTileX(lon, 15)
+                            val tileY = OfflineMapRepository.latToTileY(lat, 15)
+                            val tileKey = "${cfg.mapStyle}_15_${tileX}_$tileY"
+                            if (tileKey != lastPrewarmedTileKey) {
+                                lastPrewarmedTileKey = tileKey
+                                viewModelScope.launch {
+                                    miniMapRenderer.prewarmVisitedAreaCache(
+                                        latitude = lat,
+                                        longitude = lon,
+                                        zoom = 15,
+                                        mapStyle = cfg.mapStyle
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
         }
+    }
+
+    override fun onCleared() {
+        locationManager.removeLocationUpdatesListener(miniMapLocationUpdatesListener)
+        super.onCleared()
+    }
+
+    private fun hasMovedBeyondMiniMapThreshold(
+        lastLat: Double?,
+        lastLon: Double?,
+        newLat: Double?,
+        newLon: Double?
+    ): Boolean {
+        if (newLat == null || newLon == null) return false
+        if (lastLat == null || lastLon == null) return true
+        val distanceMeters = LocationUpdatesListener.computeDistanceMeters(
+            startLat = lastLat,
+            startLon = lastLon,
+            endLat = newLat,
+            endLon = newLon
+        )
+        return distanceMeters > LocationUpdatesListener.DEFAULT_MIN_DISPLACEMENT_METERS
     }
 
     fun onPermissionsUpdated(hasLocationPermission: Boolean) {
@@ -174,6 +289,19 @@ class CameraViewModel(
 
     fun refreshDeviceLocation(hasLocationPermission: Boolean = true) {
         locationManager.refreshLocationNow(hasLocationPermission)
+    }
+
+    fun onNetworkConnectivityChanged(isOnline: Boolean, hasLocationPermission: Boolean = true) {
+        _fallbackOnlineState.value = isOnline
+        if (isOnline) {
+            locationManager.onNetworkRestored(hasLocationPermission)
+            lastRenderedStyleKey = null
+            _miniMapThresholdEvents.update { it + 1L }
+        }
+    }
+
+    fun requestPendingMetadataSync() {
+        locationManager.requestMetadataSyncWhenConnected(replaceExisting = true)
     }
 
     fun onLifecyclePause() {
@@ -457,24 +585,43 @@ class CameraViewModel(
         config: StampConfig
     ): Bitmap {
         val styleKey = "${config.mapStyle}_${config.offlineOnlyMapMode}_${config.accentColor}_${config.template}_${config.layoutTemplate}"
-        val latSame = (telemetry.latitude == null && lastRenderedLat == null) ||
-            (telemetry.latitude != null && lastRenderedLat != null && abs(lastRenderedLat!! - telemetry.latitude) <= 0.00025)
-        val lonSame = (telemetry.longitude == null && lastRenderedLon == null) ||
-            (telemetry.longitude != null && lastRenderedLon != null && abs(lastRenderedLon!! - telemetry.longitude) <= 0.00025)
+        val movedBeyondThreshold = hasMovedBeyondMiniMapThreshold(
+            lastLat = lastRenderedLat,
+            lastLon = lastRenderedLon,
+            newLat = telemetry.latitude,
+            newLon = telemetry.longitude
+        )
         val cached = _miniMapBitmap.value
-        if (cached != null && !cached.isRecycled && latSame && lonSame && styleKey == lastRenderedStyleKey) {
+        if (cached != null && !cached.isRecycled && !movedBeyondThreshold && styleKey == lastRenderedStyleKey) {
             return cached
         }
-        return miniMapRenderer.renderMiniMapBitmap(
+        val isLight = config.template == StampTemplate.CLASSIC_WHITE ||
+            config.layoutTemplate == StampLayoutTemplate.CLASSIC
+        val rendered = if (config.offlineOnlyMapMode) {
+            null
+        } else {
+            withTimeoutOrNull(2500L) {
+                miniMapRenderer.renderMiniMapBitmap(
+                    latitude = telemetry.latitude,
+                    longitude = telemetry.longitude,
+                    zoom = 15,
+                    outputSizePx = 280,
+                    mapStyle = config.mapStyle,
+                    offlineOnly = false,
+                    accentColorInt = config.accentColor.argbInt,
+                    isLightCard = isLight
+                )
+            }
+        }
+        return rendered ?: miniMapRenderer.renderMiniMapBitmap(
             latitude = telemetry.latitude,
             longitude = telemetry.longitude,
             zoom = 15,
             outputSizePx = 280,
             mapStyle = config.mapStyle,
-            offlineOnly = config.offlineOnlyMapMode,
+            offlineOnly = true,
             accentColorInt = config.accentColor.argbInt,
-            isLightCard = config.template == StampTemplate.CLASSIC_WHITE ||
-                config.layoutTemplate == StampLayoutTemplate.CLASSIC
+            isLightCard = isLight
         )
     }
 
@@ -623,7 +770,9 @@ class CameraViewModel(
         private val stampPrefs: StampPreferencesRepository,
         private val photoRepository: PhotoRepository,
         private val miniMapRenderer: MiniMapTileRenderer,
-        private val mediaStoreSaver: MediaStoreSaver
+        private val mediaStoreSaver: MediaStoreSaver,
+        private val connectivityObserver: NetworkConnectivityObserver? = null,
+        private val locationSyncStore: LocationMetadataSyncStore? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -632,7 +781,9 @@ class CameraViewModel(
                 stampPrefs,
                 photoRepository,
                 miniMapRenderer,
-                mediaStoreSaver
+                mediaStoreSaver,
+                connectivityObserver,
+                locationSyncStore
             ) as T
         }
     }

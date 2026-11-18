@@ -93,7 +93,7 @@ fun YvGpsCamLogoBadge(
     val safeAlpha = alpha.coerceIn(0.25f, 1f)
     Image(
         painter = painterResource(id = R.drawable.img_brand_yv_logo),
-        contentDescription = "${config.customBrandLabel} logo",
+        contentDescription = "${StampConfig.FIXED_BRAND_NAME} logo",
         contentScale = ContentScale.Crop,
         alpha = safeAlpha,
         modifier = modifier
@@ -1227,7 +1227,7 @@ private fun BrandWatermarkColumn(
             alpha = logoAlpha
         )
         Text(
-            text = config.customBrandLabel.ifBlank { "YVGPSCAM" },
+            text = StampConfig.FIXED_BRAND_NAME,
             color = titleColor,
             fontFamily = primaryFont,
             fontWeight = FontWeight.Bold,
