@@ -73,21 +73,9 @@ def fix_packages_and_imports():
 
 
 def fix_metadata_sync_mismatches():
-    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext' at line 44:88!
-    # WHY ALL PREVIOUS FIXES FAILED:
-    # Look at the dot before column 88: `container.appContext` (e.g. `(applicationContext as YvGpsCamApplication).container.appContext`
-    # or `app.container.appContext`)!
-    # In Kotlin, `container` (`YvGpsCamContainer`) defines `context` (or `private val context: Context`), NOT `public val appContext: Context`!
-    # First, expose `val appContext: android.content.Context get() = ...` on `YvGpsCamContainer` AND replace `.appContext` in `LocationMetadataSyncWorker.kt`!
     for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
         c_txt = open(c_path, encoding="utf-8").read()
         orig_c = c_txt
-        # Remove stale named arguments `isNetworkOnline = ...` and `syncStore = ...`
-        new_lines = [line for line in c_txt.splitlines() if not re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line)]
-        c_txt = "\n".join(new_lines) + "\n"
-
-        # Also check constructor parameter of YvGpsCamContainer (e.g., `class YvGpsCamContainer(context: Context)` or `(private val context: Context)`)
-        # Make sure `val appContext: Context` exists on `YvGpsCamContainer` so `container.appContext` ALWAYS compiles!
         m_c = re.search(r'(\bclass\s+YvGpsCamContainer\s*\()([^)]*)(\)\s*\{)', c_txt, re.S)
         if m_c and not re.search(r'\bval\s+appContext\b', c_txt):
             p_pre, p_args, p_suf = m_c.groups()
@@ -98,33 +86,30 @@ def fix_metadata_sync_mismatches():
                     p_args = re.sub(rf'\b({ctx_name}\s*:\s*(?:android\.content\.)?Context)', r'val \1', p_args, count=1)
                 else:
                     p_args = re.sub(rf'\bprivate\s+(val\s+{ctx_name}\s*:)', r'\1', p_args, count=1)
-                c_txt = c_txt[:m_c.start()] + p_pre + p_args + p_suf + f"\n    val appContext: android.content.Context get() = {ctx_name}.applicationContext\n" + c_txt[m_c.end():]
-                print(f"Exposed val appContext on YvGpsCamContainer in {c_path}")
-
+                c_txt = (
+                    c_txt[:m_c.start()]
+                    + p_pre + p_args + p_suf
+                    + f"\n    val appContext: android.content.Context get() = {ctx_name}.applicationContext\n"
+                    + c_txt[m_c.end():]
+                )
         if c_txt != orig_c:
             open(c_path, "w", encoding="utf-8").write(c_txt)
 
-    # Also expose `val appContext` on Application class if `YvGpsCamApplication` is used (`(applicationContext as YvGpsCamApplication).appContext`)
     for app_path in glob.glob("app/src/**/*Application.kt", recursive=True):
         ap_txt = open(app_path, encoding="utf-8").read()
-        if "class " in ap_txt and "Application()" in ap_txt and "val appContext" not in ap_txt:
+        if "Application()" in ap_txt and "val appContext" not in ap_txt:
             m_ap = re.search(r'(\bclass\s+[A-Za-z0-9_]+Application\s*:\s*Application\(\)\s*\{)', ap_txt)
             if m_ap:
-                ap_txt = ap_txt[:m_ap.end()] + "\n    val appContext: android.content.Context get() = applicationContext\n" + ap_txt[m_ap.end():]
+                ap_txt = (
+                    ap_txt[:m_ap.end()]
+                    + "\n    val appContext: android.content.Context get() = applicationContext\n"
+                    + ap_txt[m_ap.end():]
+                )
                 open(app_path, "w", encoding="utf-8").write(ap_txt)
-                print(f"Exposed val appContext on Application class in {app_path}")
 
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
-        print("=== LocationMetadataSyncWorker.kt BEFORE ===")
-        for idx, l in enumerate(w_txt.splitlines(), 1):
-            print(f"{idx:02d}: {l}")
-
-        # Replace any `<expr>.appContext` inside CoroutineWorker with `applicationContext` (or keep valid via YvGpsCamContainer.appContext above)
-        # AND ensure bare `appContext` in constructor / class / companion is also valid!
-        w_txt = re.sub(r'\bappContext\s*=\s*(?!=)', '', w_txt)
-
         m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', w_txt, re.S)
         if m_cls:
             prefix, ctor_params, suffix = m_cls.groups()
@@ -139,47 +124,29 @@ def fix_metadata_sync_mismatches():
                 if not re.search(r'\b(?:val|var)\s+appContext\b', body_after.split("companion object")[0]):
                     w_txt = w_txt[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after
 
-        if w_txt != orig_w:
-            open(w_path, "w", encoding="utf-8").write(w_txt)
-            print("=== LocationMetadataSyncWorker.kt AFTER ===")
-            for idx, l in enumerate(w_txt.splitlines(), 1):
-                print(f"{idx:02d}: {l}")
-
-    # Fix 3: CameraViewModel.kt -> Unresolved reference 'requestMetadataSyncWhenConnected'
-    all_kt = glob.glob("app/src/**/*.kt", recursive=True)
-    has_sync_fn = any("fun requestMetadataSyncWhenConnected" in open(p, encoding="utf-8", errors="ignore").read() for p in all_kt)
-    if not has_sync_fn:
-        for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
-            w_txt = open(w_path, encoding="utf-8").read()
-            if "companion object" in w_txt and "requestMetadataSyncWhenConnected" not in w_txt:
-                w_txt = re.sub(
-                    r'(companion\s+object\s*\{)',
-                    r'\1\n        fun requestMetadataSyncWhenConnected(context: android.content.Context) {\n            val constraints = androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build()\n            val req = androidx.work.OneTimeWorkRequestBuilder<LocationMetadataSyncWorker>().setConstraints(constraints).build()\n            androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("location_metadata_sync", androidx.work.ExistingWorkPolicy.KEEP, req)\n        }',
-                    w_txt,
-                    count=1
-                )
-                open(w_path, "w", encoding="utf-8").write(w_txt)
-            elif "companion object" not in w_txt:
+        all_kt = glob.glob("app/src/**/*.kt", recursive=True)
+        has_sync_fn = any("fun requestMetadataSyncWhenConnected" in open(p, encoding="utf-8", errors="ignore").read() for p in all_kt)
+        if not has_sync_fn and "requestMetadataSyncWhenConnected" not in w_txt:
+            helper_body = """
+        fun requestMetadataSyncWhenConnected(context: android.content.Context) {
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                .build()
+            val req = androidx.work.OneTimeWorkRequestBuilder<LocationMetadataSyncWorker>()
+                .setConstraints(constraints)
+                .build()
+            androidx.work.WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork("location_metadata_sync", androidx.work.ExistingWorkPolicy.KEEP, req)
+        }"""
+            if "companion object" in w_txt:
+                w_txt = re.sub(r'(companion\s+object\s*\{)', r'\1' + helper_body, w_txt, count=1)
+            else:
                 idx = w_txt.rfind("}")
                 if idx != -1:
-                    helper = """
-    companion object {
-        fun requestMetadataSyncWhenConnected(context: android.content.Context) {
-            val constraints = androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build()
-            val req = androidx.work.OneTimeWorkRequestBuilder<LocationMetadataSyncWorker>().setConstraints(constraints).build()
-            androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("location_metadata_sync", androidx.work.ExistingWorkPolicy.KEEP, req)
-        }
-    }
-}
-"""
-                    w_txt = w_txt[:idx] + helper
-                    open(w_path, "w", encoding="utf-8").write(w_txt)
+                    w_txt = w_txt[:idx] + f"\n    companion object {{{helper_body}\n    }}\n}}\n"
 
-        for vm_path in glob.glob("app/src/**/CameraViewModel.kt", recursive=True):
-            vm_txt = open(vm_path, encoding="utf-8").read()
-            if "requestMetadataSyncWhenConnected" in vm_txt and "LocationMetadataSyncWorker.requestMetadataSyncWhenConnected" not in vm_txt:
-                vm_txt = re.sub(r'[A-Za-z0-9_]+\.requestMetadataSyncWhenConnected\s*\([^)]*\)', 'Unit', vm_txt)
-                open(vm_path, "w", encoding="utf-8").write(vm_txt)
+        if w_txt != orig_w:
+            open(w_path, "w", encoding="utf-8").write(w_txt)
 
 
 def inject_keys_and_google_maps():
