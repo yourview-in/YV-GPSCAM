@@ -2,6 +2,7 @@ import os
 import re
 import glob
 
+
 def fix_packages_and_imports():
     NEW_PKG_RAW = "in.yourview.yvgpscam"
     NEW_PKG_KT = "`in`.yourview.yvgpscam"
@@ -96,7 +97,6 @@ def inject_keys_and_google_maps():
     else:
         print(f"WEB_CLIENT_ID loaded (length: {len(client_id)}).")
 
-    # 1. Inject real API keys and WEB_CLIENT_ID into build.gradle.kts / build.gradle
     for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
         if os.path.exists(gradle_file):
             g_txt = open(gradle_file, encoding="utf-8").read()
@@ -133,30 +133,91 @@ def inject_keys_and_google_maps():
                     rf'\g<1>"\\"{client_id}\\""\g<2>',
                     g_txt
                 )
+
+            if "play-services-maps" not in g_txt and "dependencies {" in g_txt:
+                if gradle_file.endswith(".kts"):
+                    maps_deps = '\n    implementation("com.google.android.gms:play-services-maps:19.0.0")\n    implementation("com.google.maps.android:maps-compose:6.1.0")\n'
+                else:
+                    maps_deps = "\n    implementation 'com.google.android.gms:play-services-maps:19.0.0'\n    implementation 'com.google.maps.android:maps-compose:6.1.0'\n"
+                g_txt = g_txt.replace("dependencies {", "dependencies {" + maps_deps, 1)
+
             open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-    # 2. Inject MAPS_API_KEY directly into GoogleMapsComponents.kt & OfflineMapRepository.kt
     if maps_key and maps_key != "placeholder":
+        manifest_path = "app/src/main/AndroidManifest.xml"
+        if os.path.exists(manifest_path):
+            m_txt = open(manifest_path, encoding="utf-8").read()
+            m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key).replace("${MAPS_API_KEY}", maps_key)
+            if "com.google.android.geo.API_KEY" not in m_txt and "</application>" in m_txt:
+                meta_tag = f'        <meta-data android:name="com.google.android.geo.API_KEY" android:value="{maps_key}" />\n    </application>'
+                m_txt = m_txt.replace("</application>", meta_tag, 1)
+            open(manifest_path, "w", encoding="utf-8").write(m_txt)
+
         for fp in glob.glob("app/src/main/**/*.kt", recursive=True):
             k_txt = open(fp, encoding="utf-8", errors="ignore").read()
             orig_k = k_txt
             k_txt = k_txt.replace("MY_MAPS_API_KEY", maps_key)
             k_txt = k_txt.replace("BuildConfig.MAPS_API_KEY", f'"{maps_key}"')
             if k_txt != orig_k:
-                print(f"Injected Google Maps API key into {fp}")
                 open(fp, "w", encoding="utf-8").write(k_txt)
 
-        manifest_path = "app/src/main/AndroidManifest.xml"
-        if os.path.exists(manifest_path):
-            m_txt = open(manifest_path, encoding="utf-8").read()
-            m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key)
-            m_txt = m_txt.replace("${MAPS_API_KEY}", maps_key)
-            open(manifest_path, "w", encoding="utf-8").write(m_txt)
-
-    # 3. Attach Android Package + SHA-1 headers to Google Static Maps HTTP requests
     repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
-    if os.path.exists(repo_path):
+    if os.path.exists(repo_path) and maps_key and maps_key != "placeholder":
         r_txt = open(repo_path, encoding="utf-8").read()
+
+        old_root_decl = """private val tilesRootDir: File by lazy {
+        File(context.filesDir, "offline_tiles").apply { mkdirs() }
+    }"""
+        new_root_decl = """private val tilesRootDir: File by lazy {
+        val dir = File(context.filesDir, "offline_tiles").apply { mkdirs() }
+        val marker = File(dir, ".google_maps_migrated_v1")
+        if (!marker.exists()) {
+            dir.listFiles()?.forEach { it.deleteRecursively() }
+            dir.mkdirs()
+            runCatching { marker.createNewFile() }
+        }
+        dir
+    }"""
+        if old_root_decl in r_txt:
+            r_txt = r_txt.replace(old_root_decl, new_root_decl, 1)
+
+        old_tile_fn = re.compile(
+            r'fun\s+fetchTileFromNetworkAndCache\s*\([^)]*\)\s*:\s*ByteArray\?\s*\{.*?(?=\n\s*private\s+fun\s+executeTileRequest)',
+            re.DOTALL
+        )
+        new_tile_fn = f"""fun fetchTileFromNetworkAndCache(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): ByteArray? {{
+        val n = 2.0.pow(z.toDouble())
+        val tileLon = ((x + 0.5) / n) * 360.0 - 180.0
+        val latRad = atan(sinh(PI * (1.0 - 2.0 * (y + 0.5) / n)))
+        val tileLat = Math.toDegrees(latRad)
+        val googleMapType = when (mapStyle) {{
+            MapStyle.STANDARD -> "roadmap"
+            MapStyle.SATELLITE -> "satellite"
+            MapStyle.TERRAIN -> "terrain"
+            MapStyle.HYBRID -> "hybrid"
+        }}
+        val url = String.format(
+            Locale.US,
+            "https://maps.googleapis.com/maps/api/staticmap?center=%.6f,%.6f&zoom=%d&size=256x256&scale=2&maptype=%s&key=%s",
+            tileLat,
+            tileLon,
+            z.coerceIn(1, 20),
+            googleMapType,
+            "{maps_key}"
+        )
+        val bytes = executeTileRequest(url)
+        if (bytes != null && isValidImageBytes(bytes)) {{
+            saveTileBytes(z, x, y, bytes, mapStyle)
+            return bytes
+        }}
+        return null
+    }}
+
+    """
+        if old_tile_fn.search(r_txt):
+            r_txt = old_tile_fn.sub(new_tile_fn, r_txt, count=1)
+            print("Routed fetchTileFromNetworkAndCache to official Google Maps!")
+
         if "X-Android-Package" not in r_txt and '.header("User-Agent"' in r_txt:
             helper_snippet = """val androidCertSha1 = runCatching {
             val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
@@ -185,10 +246,10 @@ def inject_keys_and_google_maps():
             .build()"""
             if old_req in r_txt:
                 r_txt = r_txt.replace(old_req, helper_snippet, 1)
-                open(repo_path, "w", encoding="utf-8").write(r_txt)
-                print("Added X-Android-Package and X-Android-Cert headers for Google Static Maps API!")
+                print("Attached X-Android-Package & X-Android-Cert headers for Google Maps!")
 
-    # 4. Patch GoogleDriveAuthHelper.kt with direct WEB_CLIENT_ID fallback
+        open(repo_path, "w", encoding="utf-8").write(r_txt)
+
     auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
     if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
         a_txt = open(auth_helper_path, encoding="utf-8").read()
