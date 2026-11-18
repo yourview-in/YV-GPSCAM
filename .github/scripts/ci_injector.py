@@ -74,47 +74,39 @@ def fix_packages_and_imports():
 
 def fix_metadata_sync_mismatches():
     # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext'
-    # Unconditionally replace constructor `appContext: Context` -> `context: Context`
-    # and replace ALL remaining `appContext` usages in the file (including companion object!) with `applicationContext` or `context`!
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
-        orig_w = w_txt
-        # Step A: If `appContext` is inside companion object `fun ...(context: Context)`, replace `appContext` with `context.applicationContext`
-        # First, promote constructor parameter `appContext: Context` -> `private val appContext: Context` cleanly without multiline regex pitfalls
-        lines = w_txt.splitlines()
-        in_companion = False
-        new_lines = []
-        for idx, line in enumerate(lines):
-            if re.search(r'\bcompanion\s+object\b', line):
-                in_companion = True
-            # If constructor line has `appContext: Context` without val/var:
-            if not in_companion and re.search(r'(?<!val\s)(?<!var\s)\bappContext\s*:\s*Context', line):
-                line = re.sub(r'\bappContext(\s*:\s*Context)', r'private val appContext\1', line)
-            elif in_companion and "appContext" in line:
-                # Inside companion object, `this` has no `appContext`! Find the Context parameter name (usually `context`)
-                line = re.sub(r'\bappContext\b', 'context.applicationContext', line)
-            new_lines.append(line)
-        w_txt = "\n".join(new_lines) + "\n"
+        if "companion object" in w_txt:
+            head_body, tail = w_txt.split("companion object", 1)
+        else:
+            head_body, tail = w_txt, ""
 
-        # If `private val appContext` still wasn't found anywhere in class header, replace any `appContext` inside class body with `applicationContext`
-        if "val appContext" not in w_txt and "appContext" in w_txt:
-            w_txt = re.sub(r'\bappContext\b', 'applicationContext', w_txt)
+        # Rename constructor parameter appContext: Context -> context: Context
+        # and replace ALL appContext inside class body with WorkManager's built-in applicationContext
+        head_body = re.sub(r'\b(?:private\s+val\s+|val\s+)?appContext(\s*:\s*(?:android\.content\.)?Context)', r'context\1', head_body)
+        head_body = re.sub(r'\bappContext\b', 'applicationContext', head_body)
 
-        if w_txt != orig_w:
-            open(w_path, "w", encoding="utf-8").write(w_txt)
-            print(f"Fixed appContext in {w_path}")
+        if tail:
+            t_lines = tail.splitlines()
+            current_ctx_param = "context"
+            for i, tl in enumerate(t_lines):
+                m_ctx = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', tl)
+                if m_ctx:
+                    current_ctx_param = m_ctx.group(1)
+                elif "appContext" in tl:
+                    t_lines[i] = re.sub(r'\bappContext\b', current_ctx_param, tl)
+            tail = "\n".join(t_lines)
+            w_txt = head_body + "companion object" + tail
+        else:
+            w_txt = head_body
+
+        open(w_path, "w", encoding="utf-8").write(w_txt)
 
     # Fix 2: YvGpsCamContainer.kt -> No parameter with name 'isNetworkOnline' / 'syncStore'
     for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
         c_txt = open(c_path, encoding="utf-8").read()
         orig_c = c_txt
-        lines = c_txt.splitlines()
-        new_lines = []
-        for line in lines:
-            if re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line):
-                print(f"Removed unsupported named argument line in YvGpsCamContainer.kt: {line.strip()}")
-                continue
-            new_lines.append(line)
+        new_lines = [line for line in c_txt.splitlines() if not re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line)]
         c_txt = "\n".join(new_lines) + "\n"
         if c_txt != orig_c:
             open(c_path, "w", encoding="utf-8").write(c_txt)
@@ -152,14 +144,8 @@ def fix_metadata_sync_mismatches():
         for vm_path in glob.glob("app/src/**/CameraViewModel.kt", recursive=True):
             vm_txt = open(vm_path, encoding="utf-8").read()
             if "requestMetadataSyncWhenConnected" in vm_txt and "LocationMetadataSyncWorker.requestMetadataSyncWhenConnected" not in vm_txt:
-                orig_vm = vm_txt
-                vm_txt = re.sub(
-                    r'[A-Za-z0-9_]+\.requestMetadataSyncWhenConnected\s*\([^)]*\)',
-                    'Unit',
-                    vm_txt
-                )
-                if vm_txt != orig_vm:
-                    open(vm_path, "w", encoding="utf-8").write(vm_txt)
+                vm_txt = re.sub(r'[A-Za-z0-9_]+\.requestMetadataSyncWhenConnected\s*\([^)]*\)', 'Unit', vm_txt)
+                open(vm_path, "w", encoding="utf-8").write(vm_txt)
 
 
 def inject_keys_and_google_maps():
@@ -235,7 +221,7 @@ def inject_keys_and_google_maps():
                     rf'\g<1>"\\"{gemini_key}\\""\g<2>',
                     g_txt
                 )
-            if "googleusercontent.com" in client_id and not client_id.startswith("000000000000-"):
+            if "googleusercontent.com" in client_id:
                 g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
                 g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))',
@@ -281,7 +267,7 @@ def inject_keys_and_google_maps():
     }"""
         new_root_decl = """private val tilesRootDir: File by lazy {
         val dir = File(context.filesDir, "offline_tiles").apply { mkdirs() }
-        val marker = File(dir, ".google_maps_migrated_v1")
+        val marker = File(dir, ".google_maps_migrated_v3")
         if (!marker.exists()) {
             dir.listFiles()?.forEach { it.deleteRecursively() }
             dir.mkdirs()
@@ -362,11 +348,11 @@ def inject_keys_and_google_maps():
         open(repo_path, "w", encoding="utf-8").write(r_txt)
 
     auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
-    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("000000000000-"):
+    if os.path.exists(auth_helper_path):
         a_txt = open(auth_helper_path, encoding="utf-8").read()
         a_txt = re.sub(
             r'runCatching\s*\{\s*(?:context|activity)\.getString\(R\.string\.default_web_client_id\)\s*\}\.getOrNull\(\)',
-            f'"{client_id}".takeIf {{ it.isNotBlank() }}',
+            f'"{client_id}".takeIf {{ it.endsWith(".apps.googleusercontent.com") && !it.startsWith("000000000000-") }}',
             a_txt
         )
         open(auth_helper_path, "w", encoding="utf-8").write(a_txt)
