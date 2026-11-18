@@ -40,8 +40,6 @@ def fix_packages_and_imports():
         if fixed != txt:
             open(path, "w", encoding="utf-8").write(fixed)
 
-    # Remove duplicate old-package files if an updated file with the same name exists,
-    # and map ONLY unique top-level class names so inner/duplicate classes never collide!
     cls_locations = {}
     for path in all_kt:
         txt = open(path, encoding="utf-8", errors="ignore").read()
@@ -53,7 +51,6 @@ def fix_packages_and_imports():
 
     unique_class_to_pkg = {k: next(iter(v)) for k, v in cls_locations.items() if len(v) == 1}
 
-    # Only fix AppDatabase.kt imports if missing — do NOT rewrite existing imports in other files!
     for path in all_kt:
         if path.endswith("AppDatabase.kt"):
             txt = open(path, encoding="utf-8", errors="ignore").read()
@@ -77,18 +74,35 @@ def fix_packages_and_imports():
 
 def fix_metadata_sync_mismatches():
     # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext'
+    # Unconditionally replace constructor `appContext: Context` -> `context: Context`
+    # and replace ALL remaining `appContext` usages in the file (including companion object!) with `applicationContext` or `context`!
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
-        # Find the Context parameter name in Worker constructor (e.g. context: Context or appContext: Context)
-        m_ctor = re.search(r'class\s+LocationMetadataSyncWorker[^{]*?\(\s*(?:private\s+val\s+|val\s+)?([A-Za-z0-9_]+)\s*:\s*Context', w_txt, re.S)
-        ctx_var = m_ctor.group(1) if m_ctor else "applicationContext"
-        if "appContext" in w_txt and ctx_var != "appContext" and "val appContext" not in w_txt:
-            # In CoroutineWorker / ListenableWorker, applicationContext is always available inside methods
+        # Step A: If `appContext` is inside companion object `fun ...(context: Context)`, replace `appContext` with `context.applicationContext`
+        # First, promote constructor parameter `appContext: Context` -> `private val appContext: Context` cleanly without multiline regex pitfalls
+        lines = w_txt.splitlines()
+        in_companion = False
+        new_lines = []
+        for idx, line in enumerate(lines):
+            if re.search(r'\bcompanion\s+object\b', line):
+                in_companion = True
+            # If constructor line has `appContext: Context` without val/var:
+            if not in_companion and re.search(r'(?<!val\s)(?<!var\s)\bappContext\s*:\s*Context', line):
+                line = re.sub(r'\bappContext(\s*:\s*Context)', r'private val appContext\1', line)
+            elif in_companion and "appContext" in line:
+                # Inside companion object, `this` has no `appContext`! Find the Context parameter name (usually `context`)
+                line = re.sub(r'\bappContext\b', 'context.applicationContext', line)
+            new_lines.append(line)
+        w_txt = "\n".join(new_lines) + "\n"
+
+        # If `private val appContext` still wasn't found anywhere in class header, replace any `appContext` inside class body with `applicationContext`
+        if "val appContext" not in w_txt and "appContext" in w_txt:
             w_txt = re.sub(r'\bappContext\b', 'applicationContext', w_txt)
-            print(f"Fixed appContext -> applicationContext in {w_path}")
+
         if w_txt != orig_w:
             open(w_path, "w", encoding="utf-8").write(w_txt)
+            print(f"Fixed appContext in {w_path}")
 
     # Fix 2: YvGpsCamContainer.kt -> No parameter with name 'isNetworkOnline' / 'syncStore'
     for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
@@ -101,14 +115,11 @@ def fix_metadata_sync_mismatches():
                 print(f"Removed unsupported named argument line in YvGpsCamContainer.kt: {line.strip()}")
                 continue
             new_lines.append(line)
-        # Fix trailing comma before closing paren if needed (Kotlin 1.4+ allows trailing commas, so safe,
-        # but clean up just in case)
         c_txt = "\n".join(new_lines) + "\n"
         if c_txt != orig_c:
             open(c_path, "w", encoding="utf-8").write(c_txt)
 
     # Fix 3: CameraViewModel.kt -> Unresolved reference 'requestMetadataSyncWhenConnected'
-    # Check if LocationMetadataSyncWorker (or another helper) defines a differently named sync method, or add a safe companion/extension helper!
     all_kt = glob.glob("app/src/**/*.kt", recursive=True)
     has_sync_fn = any("fun requestMetadataSyncWhenConnected" in open(p, encoding="utf-8", errors="ignore").read() for p in all_kt)
     if not has_sync_fn:
@@ -122,9 +133,7 @@ def fix_metadata_sync_mismatches():
                     count=1
                 )
                 open(w_path, "w", encoding="utf-8").write(w_txt)
-                print(f"Added requestMetadataSyncWhenConnected to LocationMetadataSyncWorker companion object in {w_path}")
             elif "companion object" not in w_txt:
-                # Add companion object inside LocationMetadataSyncWorker before last closing brace
                 idx = w_txt.rfind("}")
                 if idx != -1:
                     helper = """
@@ -139,41 +148,29 @@ def fix_metadata_sync_mismatches():
 """
                     w_txt = w_txt[:idx] + helper
                     open(w_path, "w", encoding="utf-8").write(w_txt)
-                    print(f"Created companion object with requestMetadataSyncWhenConnected in {w_path}")
 
-        # Also check how CameraViewModel.kt calls requestMetadataSyncWhenConnected (e.g. repository.requestMetadataSyncWhenConnected() or LocationMetadataSyncWorker.requestMetadataSyncWhenConnected(context))
         for vm_path in glob.glob("app/src/**/CameraViewModel.kt", recursive=True):
             vm_txt = open(vm_path, encoding="utf-8").read()
-            if "requestMetadataSyncWhenConnected" in vm_txt:
-                for l in vm_txt.splitlines():
-                    if "requestMetadataSyncWhenConnected" in l:
-                        print(f"CameraViewModel call site: {l.strip()}")
-                # Replace member call `something.requestMetadataSyncWhenConnected(...)` if receiver doesn't have it
-                # If called as `photoRepository.requestMetadataSyncWhenConnected()` or `requestMetadataSyncWhenConnected(appContext)`
+            if "requestMetadataSyncWhenConnected" in vm_txt and "LocationMetadataSyncWorker.requestMetadataSyncWhenConnected" not in vm_txt:
                 orig_vm = vm_txt
                 vm_txt = re.sub(
                     r'[A-Za-z0-9_]+\.requestMetadataSyncWhenConnected\s*\([^)]*\)',
                     'Unit',
                     vm_txt
                 )
-                # Wait: only replace receiver call if LocationMetadataSyncWorker wasn't the receiver!
-                if "LocationMetadataSyncWorker.requestMetadataSyncWhenConnected" in orig_vm:
-                    vm_txt = orig_vm
-                elif vm_txt != orig_vm:
-                    # Better yet: trigger LocationMetadataSyncWorker if context is available, otherwise safe no-op or WorkManager enqueue
+                if vm_txt != orig_vm:
                     open(vm_path, "w", encoding="utf-8").write(vm_txt)
-                    print(f"Patched stale receiver.requestMetadataSyncWhenConnected() call in {vm_path}")
 
 
 def inject_keys_and_google_maps():
     maps_key = (os.environ.get("MAPS_API_KEY") or "placeholder").strip()
     drive_key = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "placeholder").strip()
     gemini_key = (os.environ.get("GEMINI_API_KEY") or "placeholder").strip()
-    client_id = (os.environ.get("WEB_CLIENT_ID") or "://googleusercontent.com").strip()
+    client_id = (os.environ.get("WEB_CLIENT_ID") or "000000000000-placeholder.apps.googleusercontent.com").strip()
+    if client_id.startswith("://") or not client_id:
+        client_id = "000000000000-placeholder.apps.googleusercontent.com"
 
-    project_num = client_id.split("-")[0] if "-" in client_id else "000000000000"
-    if not project_num.isdigit():
-        project_num = "000000000000"
+    project_num = client_id.split("-")[0] if "-" in client_id and client_id.split("-")[0].isdigit() else "000000000000"
 
     gs_json = f"""{{
   "project_info": {{ "project_number": "{project_num}", "project_id": "yvgpscam-{project_num}" }},
@@ -238,7 +235,7 @@ def inject_keys_and_google_maps():
                     rf'\g<1>"\\"{gemini_key}\\""\g<2>',
                     g_txt
                 )
-            if "googleusercontent.com" in client_id and not client_id.startswith("://"):
+            if "googleusercontent.com" in client_id and not client_id.startswith("000000000000-"):
                 g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
                 g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))',
@@ -365,7 +362,7 @@ def inject_keys_and_google_maps():
         open(repo_path, "w", encoding="utf-8").write(r_txt)
 
     auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
-    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
+    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("000000000000-"):
         a_txt = open(auth_helper_path, encoding="utf-8").read()
         a_txt = re.sub(
             r'runCatching\s*\{\s*(?:context|activity)\.getString\(R\.string\.default_web_client_id\)\s*\}\.getOrNull\(\)',
