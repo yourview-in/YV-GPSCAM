@@ -5,25 +5,46 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import androidx.annotation.OptIn
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.StaticOverlaySettings
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
 import `in`.yourview.yvgpscam.data.model.FileNameField
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
 import `in`.yourview.yvgpscam.data.model.StampConfig
+import `in`.yourview.yvgpscam.data.model.StampPosition
+import `in`.yourview.yvgpscam.ui.viewmodel.CameraAspectRatio
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.resume
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class MediaStoreSaver(
     private val context: Context,
@@ -36,18 +57,22 @@ class MediaStoreSaver(
         miniMapBitmap: Bitmap?,
         mirrorHorizontal: Boolean = false,
         isFrontCamera: Boolean = false,
-        deviceOrientationDegrees: Int = 0
+        deviceOrientationDegrees: Int = 0,
+        targetAspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_4_3
     ): Result<CapturedPhotoEntity> = withContext(Dispatchers.IO) {
         runCatching {
             val decoded = decodeOrientedBitmap(jpegBytes, mirrorHorizontal)
                 ?: throw IllegalStateException("Failed to decode captured photo")
+            val cropped = cropBitmapToAspectRatio(decoded, targetAspectRatio)
+            if (cropped !== decoded) decoded.recycle()
+
             val now = System.currentTimeMillis()
             val fileName = buildCustomFileName(config, telemetry, now)
 
             if (config.autoSaveOriginalPhoto) {
                 runCatching {
                     saveBitmapUnstampedOriginal(
-                        bitmap = decoded,
+                        bitmap = cropped,
                         fileName = "ORIG_$fileName",
                         jpegQuality = config.photoQuality.jpegQuality
                     )
@@ -55,7 +80,7 @@ class MediaStoreSaver(
             }
 
             val stamped = stampRenderer.stampBitmap(
-                source = decoded,
+                source = cropped,
                 telemetry = telemetry,
                 config = config,
                 miniMapBitmap = miniMapBitmap,
@@ -63,7 +88,7 @@ class MediaStoreSaver(
                 isFrontCamera = isFrontCamera,
                 deviceOrientationDegrees = deviceOrientationDegrees
             )
-            if (stamped !== decoded) decoded.recycle()
+            if (stamped !== cropped) cropped.recycle()
             persistStampedBitmap(stamped, telemetry, config, fileName, now)
         }
     }
@@ -93,20 +118,198 @@ class MediaStoreSaver(
         }
     }
 
+    @OptIn(UnstableApi::class)
+    suspend fun saveStampedVideoFile(
+        rawVideoFile: File,
+        telemetry: GpsTelemetry,
+        config: StampConfig,
+        miniMapBitmap: Bitmap?,
+        isFrontCamera: Boolean = false
+    ): Result<CapturedPhotoEntity> = withContext(Dispatchers.IO) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val videoName = buildCustomFileName(config, telemetry, now)
+                .removeSuffix(".jpg") + ".mp4"
+            val (displayW, displayH) = resolveVideoDisplayDimensions(rawVideoFile)
+            val stampedTempFile = File(context.cacheDir, "stamped_${rawVideoFile.nameWithoutExtension}.mp4")
+            if (stampedTempFile.exists()) stampedTempFile.delete()
+
+            val cardBitmap = stampRenderer.renderStampCardOnly(
+                frameWidth = displayW,
+                frameHeight = displayH,
+                telemetry = telemetry,
+                config = config,
+                miniMapBitmap = miniMapBitmap,
+                capturedAtMillis = now,
+                isFrontCamera = isFrontCamera
+            )
+
+            val stampedOk = try {
+                burnStampCardOntoVideo(
+                    rawVideoFile = rawVideoFile,
+                    outputVideoFile = stampedTempFile,
+                    cardBitmap = cardBitmap,
+                    position = config.stampPosition
+                )
+            } finally {
+                if (!cardBitmap.isRecycled) cardBitmap.recycle()
+            }
+
+            val sourceToPersist = if (stampedOk && stampedTempFile.exists() && stampedTempFile.length() > 0L) {
+                stampedTempFile
+            } else {
+                rawVideoFile
+            }
+
+            try {
+                val persistedUri = persistMp4File(sourceToPersist, videoName)
+                buildRecordedVideoEntity(
+                    videoUri = persistedUri,
+                    telemetry = telemetry,
+                    config = config,
+                    width = displayW,
+                    height = displayH,
+                    capturedAtMillis = now,
+                    displayNameOverride = videoName
+                )
+            } finally {
+                runCatching { rawVideoFile.delete() }
+                runCatching { stampedTempFile.delete() }
+            }
+        }
+    }
+
+    private fun resolveVideoDisplayDimensions(videoFile: File): Pair<Int, Int> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(videoFile.absolutePath)
+            val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1080
+            val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1920
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) {
+                h to w
+            } else {
+                w to h
+            }
+        } catch (_: Throwable) {
+            1080 to 1920
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private suspend fun burnStampCardOntoVideo(
+        rawVideoFile: File,
+        outputVideoFile: File,
+        cardBitmap: Bitmap,
+        position: StampPosition
+    ): Boolean {
+        val (anchorX, anchorY) = when (position) {
+            StampPosition.TOP_LEFT -> -1f to 1f
+            StampPosition.TOP_CENTER -> 0f to 1f
+            StampPosition.TOP_RIGHT -> 1f to 1f
+            StampPosition.BOTTOM_LEFT -> -1f to -1f
+            StampPosition.BOTTOM_CENTER -> 0f to -1f
+            StampPosition.BOTTOM_RIGHT -> 1f to -1f
+        }
+        val (bgX, bgY) = when (position) {
+            StampPosition.TOP_LEFT -> -0.94f to 0.94f
+            StampPosition.TOP_CENTER -> 0f to 0.94f
+            StampPosition.TOP_RIGHT -> 0.94f to 0.94f
+            StampPosition.BOTTOM_LEFT -> -0.94f to -0.94f
+            StampPosition.BOTTOM_CENTER -> 0f to -0.94f
+            StampPosition.BOTTOM_RIGHT -> 0.94f to -0.94f
+        }
+        val settings = StaticOverlaySettings.Builder()
+            .setOverlayFrameAnchor(anchorX, anchorY)
+            .setBackgroundFrameAnchor(bgX, bgY)
+            .build()
+        val overlay = BitmapOverlay.createStaticBitmapOverlay(cardBitmap, settings)
+        val overlayEffect = OverlayEffect(listOf(overlay))
+        val editedMediaItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(rawVideoFile)))
+            .setEffects(Effects(emptyList(), listOf(overlayEffect)))
+            .build()
+
+        return withTimeoutOrNull(45_000L) {
+            suspendCancellableCoroutine { cont ->
+                val mainHandler = Handler(Looper.getMainLooper())
+                mainHandler.post {
+                    if (!cont.isActive) return@post
+                    runCatching {
+                        val transformer = Transformer.Builder(context)
+                            .addListener(object : Transformer.Listener {
+                                override fun onCompleted(composition: androidx.media3.transformer.Composition, exportResult: ExportResult) {
+                                    if (cont.isActive) cont.resume(true)
+                                }
+
+                                override fun onError(
+                                    composition: androidx.media3.transformer.Composition,
+                                    exportResult: ExportResult,
+                                    exportException: ExportException
+                                ) {
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            })
+                            .build()
+
+                        cont.invokeOnCancellation {
+                            mainHandler.post { runCatching { transformer.cancel() } }
+                        }
+                        transformer.start(editedMediaItem, outputVideoFile.absolutePath)
+                    }.onFailure {
+                        if (cont.isActive) cont.resume(false)
+                    }
+                }
+            }
+        } ?: false
+    }
+
+    private fun persistMp4File(sourceFile: File, fileName: String): Uri {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/YVGPSCAM")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val insertedUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("MediaStore failed to allocate video URI")
+            resolver.openOutputStream(insertedUri)?.use { out ->
+                FileInputStream(sourceFile).use { input -> input.copyTo(out) }
+            } ?: throw IllegalStateException("Failed to open output stream for video")
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(insertedUri, values, null, null)
+            insertedUri
+        } else {
+            val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "YVGPSCAM").apply {
+                mkdirs()
+            }
+            val outFile = File(dir, fileName)
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(outFile).use { fos -> input.copyTo(fos) }
+            }
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
+        }
+    }
+
     fun buildRecordedVideoEntity(
         videoUri: Uri,
         telemetry: GpsTelemetry,
         config: StampConfig,
         width: Int,
-        height: Int
+        height: Int,
+        capturedAtMillis: Long = System.currentTimeMillis(),
+        displayNameOverride: String? = null
     ): CapturedPhotoEntity {
-        val now = System.currentTimeMillis()
-        val videoName = buildCustomFileName(config, telemetry, now)
-            .removeSuffix(".jpg") + ".mp4"
+        val videoName = displayNameOverride ?: (buildCustomFileName(config, telemetry, capturedAtMillis)
+            .removeSuffix(".jpg") + ".mp4")
         return CapturedPhotoEntity(
             mediaUri = videoUri.toString(),
             displayName = videoName,
-            capturedAtMillis = now,
+            capturedAtMillis = capturedAtMillis,
             latitude = telemetry.latitude,
             longitude = telemetry.longitude,
             altitudeMeters = telemetry.altitudeMeters,
@@ -321,6 +524,36 @@ class MediaStoreSaver(
     }
 
     companion object {
+        fun cropBitmapToAspectRatio(
+            source: Bitmap,
+            targetAspectRatio: CameraAspectRatio
+        ): Bitmap {
+            val w = source.width
+            val h = source.height
+            if (w <= 0 || h <= 0) return source
+            val isPortrait = h >= w
+            val desiredRatio = when (targetAspectRatio) {
+                CameraAspectRatio.RATIO_1_1 -> 1f
+                CameraAspectRatio.RATIO_4_3 -> if (isPortrait) 3f / 4f else 4f / 3f
+                CameraAspectRatio.RATIO_16_9 -> if (isPortrait) 9f / 16f else 16f / 9f
+            }
+            val currentRatio = w.toFloat() / h.toFloat()
+            if (abs(currentRatio - desiredRatio) <= 0.015f) return source
+
+            val cropW: Int
+            val cropH: Int
+            if (currentRatio > desiredRatio) {
+                cropH = h
+                cropW = (h * desiredRatio).roundToInt().coerceIn(1, w)
+            } else {
+                cropW = w
+                cropH = (w / desiredRatio).roundToInt().coerceIn(1, h)
+            }
+            val x = ((w - cropW) / 2).coerceAtLeast(0)
+            val y = ((h - cropH) / 2).coerceAtLeast(0)
+            return Bitmap.createBitmap(source, x, y, cropW, cropH)
+        }
+
         fun buildCustomFileName(
             config: StampConfig,
             telemetry: GpsTelemetry,

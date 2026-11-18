@@ -46,6 +46,30 @@ class OfflineMapRepository(
         File(context.filesDir, "offline_tiles").apply { mkdirs() }
     }
 
+    private val androidCertSha1: String by lazy {
+        runCatching {
+            val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                ).signingInfo?.apkContentsSigners?.firstOrNull()
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    android.content.pm.PackageManager.GET_SIGNATURES
+                ).signatures?.firstOrNull()
+            }
+            if (sig != null) {
+                java.security.MessageDigest.getInstance("SHA-1")
+                    .digest(sig.toByteArray())
+                    .joinToString("") { "%02X".format(it) }
+            } else {
+                ""
+            }
+        }.getOrDefault("")
+    }
+
     val savedRegions: Flow<List<OfflineRegionEntity>> = regionDao.getAllRegions()
 
     fun getTileFile(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): File {
@@ -131,6 +155,32 @@ class OfflineMapRepository(
     }
 
     fun fetchTileFromNetworkAndCache(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): ByteArray? {
+        if (GoogleMapsConfig.isApiKeyConfigured()) {
+            val n = 2.0.pow(z.toDouble())
+            val tileLon = ((x + 0.5) / n) * 360.0 - 180.0
+            val latRad = atan(sinh(PI * (1.0 - 2.0 * (y + 0.5) / n)))
+            val tileLat = Math.toDegrees(latRad)
+            val googleMapType = when (mapStyle) {
+                MapStyle.STANDARD -> "roadmap"
+                MapStyle.SATELLITE -> "satellite"
+                MapStyle.TERRAIN -> "terrain"
+                MapStyle.HYBRID -> "hybrid"
+            }
+            val googleUrl = String.format(
+                Locale.US,
+                "https://maps.googleapis.com/maps/api/staticmap?center=%.6f,%.6f&zoom=%d&size=256x256&scale=2&maptype=%s&key=%s",
+                tileLat,
+                tileLon,
+                z.coerceIn(1, 20),
+                googleMapType,
+                BuildConfig.MAPS_API_KEY.trim()
+            )
+            val googleBytes = executeTileRequest(googleUrl)
+            if (googleBytes != null && isValidImageBytes(googleBytes)) {
+                saveTileBytes(z, x, y, googleBytes, mapStyle)
+                return googleBytes
+            }
+        }
         val candidateUrls = when (mapStyle) {
             MapStyle.STANDARD -> listOf(
                 "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y.png",
@@ -159,10 +209,16 @@ class OfflineMapRepository(
     }
 
     private fun executeTileRequest(url: String): ByteArray? {
-        val request = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url(url)
             .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
-            .build()
+        if (url.contains("googleapis.com")) {
+            reqBuilder.header("X-Android-Package", context.packageName)
+            if (androidCertSha1.isNotEmpty()) {
+                reqBuilder.header("X-Android-Cert", androidCertSha1)
+            }
+        }
+        val request = reqBuilder.build()
         return runCatching {
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {

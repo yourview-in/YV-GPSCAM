@@ -2,7 +2,6 @@ package `in`.yourview.yvgpscam
 
 import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.KeyEvent
@@ -12,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,14 +40,17 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -63,6 +66,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import `in`.yourview.yvgpscam.di.YvGpsCamContainer
 import `in`.yourview.yvgpscam.ui.components.AppUpdateDialog
+import `in`.yourview.yvgpscam.ui.components.findActivity
 import `in`.yourview.yvgpscam.ui.screens.CameraScreen
 import `in`.yourview.yvgpscam.ui.screens.CloudSyncRouteScreen
 import `in`.yourview.yvgpscam.ui.screens.FileNameScreen
@@ -82,6 +86,7 @@ import `in`.yourview.yvgpscam.ui.theme.YvGpsCamTheme
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraViewModel
 import `in`.yourview.yvgpscam.ui.viewmodel.GalleryViewModel
 import `in`.yourview.yvgpscam.ui.viewmodel.OfflineMapsViewModel
+import `in`.yourview.yvgpscam.util.LocaleHelper
 import kotlinx.serialization.Serializable
 
 @Serializable object CameraRoute
@@ -103,7 +108,7 @@ import kotlinx.serialization.Serializable
 
 private data class TopLevelDestination(
     val route: Any,
-    val label: String,
+    @StringRes val labelResId: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String
@@ -115,12 +120,6 @@ internal fun resolveScreenOrientationForRoute(isMainCameraPage: Boolean): Int =
     } else {
         ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
 
 private class VolumeInterceptorHolder {
     var onVolumeKey: ((Boolean) -> Boolean)? = null
@@ -141,6 +140,9 @@ class MainActivity : ComponentActivity() {
         container.appUpdateCoordinator.schedulePeriodicUpdateChecks()
         val openedFromUpdateNotification =
             intent?.getBooleanExtra(`in`.yourview.yvgpscam.util.AppUpdateCoordinator.EXTRA_OPEN_UPDATE_POPUP, false) == true
+        val openedAfterPackageReplace =
+            intent?.getBooleanExtra(`in`.yourview.yvgpscam.util.AppUpdateCoordinator.EXTRA_POST_UPDATE_LAUNCH, false) == true
+        container.appUpdateCoordinator.checkAndRecordInstalledVersionChange(openedAfterPackageReplace)
         if (openedFromUpdateNotification) {
             notificationUpdateTrigger.value += 1
         }
@@ -223,7 +225,9 @@ private fun YvGpsCamApp(
     val stampConfig by cameraViewModel.stampConfig.collectAsStateWithLifecycle()
     val appUpdateState by container.appUpdateCoordinator.updateState.collectAsStateWithLifecycle()
     val autoPushUpdates by container.appUpdateCoordinator.autoPushEnabled.collectAsStateWithLifecycle()
+    val autoOpenAfterUpdate by container.appUpdateCoordinator.autoOpenAfterUpdateEnabled.collectAsStateWithLifecycle()
     val manifestFeedUrl by container.appUpdateCoordinator.manifestFeedUrl.collectAsStateWithLifecycle()
+    val postUpdateBanner by container.appUpdateCoordinator.postUpdateBanner.collectAsStateWithLifecycle()
     val notifTriggerCount by notificationUpdateTrigger.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -237,6 +241,14 @@ private fun YvGpsCamApp(
 
     LaunchedEffect(container) {
         container.appUpdateCoordinator.checkForUpdates()
+    }
+
+    LaunchedEffect(postUpdateBanner) {
+        val msg = postUpdateBanner
+        if (!msg.isNullOrBlank()) {
+            Toast.makeText(localContext, msg, Toast.LENGTH_LONG).show()
+            container.appUpdateCoordinator.clearPostUpdateBanner()
+        }
     }
 
     LaunchedEffect(notifTriggerCount) {
@@ -273,11 +285,11 @@ private fun YvGpsCamApp(
 
     val destinations = remember {
         listOf(
-            TopLevelDestination(CameraRoute, "Camera", Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt, "nav_camera"),
-            TopLevelDestination(GalleryRoute, "Gallery", Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary, "nav_gallery"),
-            TopLevelDestination(TemplatePickerRoute, "Templates", Icons.Filled.Tune, Icons.Outlined.Tune, "nav_studio"),
-            TopLevelDestination(OfflineMapsRoute, "Offline", Icons.Filled.OfflinePin, Icons.Outlined.OfflinePin, "nav_offline"),
-            TopLevelDestination(CloudSyncRoute, "Drive", Icons.Filled.CloudUpload, Icons.Outlined.CloudUpload, "nav_cloud")
+            TopLevelDestination(CameraRoute, R.string.nav_camera, Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt, "nav_camera"),
+            TopLevelDestination(GalleryRoute, R.string.nav_gallery, Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary, "nav_gallery"),
+            TopLevelDestination(TemplatePickerRoute, R.string.nav_studio, Icons.Filled.Tune, Icons.Outlined.Tune, "nav_studio"),
+            TopLevelDestination(OfflineMapsRoute, R.string.nav_offline, Icons.Filled.OfflinePin, Icons.Outlined.OfflinePin, "nav_offline"),
+            TopLevelDestination(CloudSyncRoute, R.string.nav_cloud, Icons.Filled.CloudUpload, Icons.Outlined.CloudUpload, "nav_cloud")
         )
     }
 
@@ -301,91 +313,101 @@ private fun YvGpsCamApp(
         }
     }
 
-    YvGpsCamTheme(themeMode = stampConfig.appThemeMode) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val useNavRail = maxWidth >= 700.dp
+    val localizedContext = remember(localContext, stampConfig.appLanguage) {
+        LocaleHelper.applyLocaleToContext(localContext, stampConfig.appLanguage)
+    }
 
-            Scaffold(
-                containerColor = MaterialTheme.colorScheme.background,
-                contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                bottomBar = {
-                    if (!useNavRail && !isFullHeightSubScreen) {
-                        NavigationBar(
-                            containerColor = ObsidianSurface,
-                            tonalElevation = 0.dp
-                        ) {
-                            destinations.forEach { dest ->
-                                val selected = when (dest.route) {
-                                    is CameraRoute -> currentDestination?.hasRoute<CameraRoute>() == true
-                                    is GalleryRoute -> currentDestination?.hasRoute<GalleryRoute>() == true
-                                    is TemplatePickerRoute -> currentDestination?.hasRoute<TemplatePickerRoute>() == true
-                                    is OfflineMapsRoute -> currentDestination?.hasRoute<OfflineMapsRoute>() == true
-                                    is CloudSyncRoute -> currentDestination?.hasRoute<CloudSyncRoute>() == true
-                                    else -> false
+    CompositionLocalProvider(
+        LocalContext provides localizedContext,
+        LocalConfiguration provides localizedContext.resources.configuration
+    ) {
+        YvGpsCamTheme(themeMode = stampConfig.appThemeMode) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val useNavRail = maxWidth >= 700.dp
+
+                Scaffold(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                    bottomBar = {
+                        if (!useNavRail && !isFullHeightSubScreen) {
+                            NavigationBar(
+                                containerColor = ObsidianSurface,
+                                tonalElevation = 0.dp
+                            ) {
+                                destinations.forEach { dest ->
+                                    val selected = when (dest.route) {
+                                        is CameraRoute -> currentDestination?.hasRoute<CameraRoute>() == true
+                                        is GalleryRoute -> currentDestination?.hasRoute<GalleryRoute>() == true
+                                        is TemplatePickerRoute -> currentDestination?.hasRoute<TemplatePickerRoute>() == true
+                                        is OfflineMapsRoute -> currentDestination?.hasRoute<OfflineMapsRoute>() == true
+                                        is CloudSyncRoute -> currentDestination?.hasRoute<CloudSyncRoute>() == true
+                                        else -> false
+                                    }
+                                    val destLabel = stringResource(dest.labelResId)
+                                    NavigationBarItem(
+                                        selected = selected,
+                                        onClick = { navigateTopLevel(dest.route) },
+                                        icon = {
+                                            Icon(
+                                                imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
+                                                contentDescription = destLabel
+                                            )
+                                        },
+                                        label = { Text(destLabel) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = ObsidianBg,
+                                            selectedTextColor = TelemetryEmerald,
+                                            indicatorColor = TelemetryEmerald,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        ),
+                                        modifier = Modifier.testTag(dest.testTag)
+                                    )
                                 }
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { navigateTopLevel(dest.route) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                            contentDescription = dest.label
-                                        )
-                                    },
-                                    label = { Text(dest.label) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = ObsidianBg,
-                                        selectedTextColor = TelemetryEmerald,
-                                        indicatorColor = TelemetryEmerald,
-                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                    ),
-                                    modifier = Modifier.testTag(dest.testTag)
-                                )
                             }
                         }
                     }
-                }
-            ) { innerPadding ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
-                    if (useNavRail && !isFullHeightSubScreen) {
-                        NavigationRail(
-                            containerColor = ObsidianSurface,
-                            modifier = Modifier.fillMaxHeight()
-                        ) {
-                            destinations.forEach { dest ->
-                                val selected = when (dest.route) {
-                                    is CameraRoute -> currentDestination?.hasRoute<CameraRoute>() == true
-                                    is GalleryRoute -> currentDestination?.hasRoute<GalleryRoute>() == true
-                                    is TemplatePickerRoute -> currentDestination?.hasRoute<TemplatePickerRoute>() == true
-                                    is OfflineMapsRoute -> currentDestination?.hasRoute<OfflineMapsRoute>() == true
-                                    is CloudSyncRoute -> currentDestination?.hasRoute<CloudSyncRoute>() == true
-                                    else -> false
+                ) { innerPadding ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                    ) {
+                        if (useNavRail && !isFullHeightSubScreen) {
+                            NavigationRail(
+                                containerColor = ObsidianSurface,
+                                modifier = Modifier.fillMaxHeight()
+                            ) {
+                                destinations.forEach { dest ->
+                                    val selected = when (dest.route) {
+                                        is CameraRoute -> currentDestination?.hasRoute<CameraRoute>() == true
+                                        is GalleryRoute -> currentDestination?.hasRoute<GalleryRoute>() == true
+                                        is TemplatePickerRoute -> currentDestination?.hasRoute<TemplatePickerRoute>() == true
+                                        is OfflineMapsRoute -> currentDestination?.hasRoute<OfflineMapsRoute>() == true
+                                        is CloudSyncRoute -> currentDestination?.hasRoute<CloudSyncRoute>() == true
+                                        else -> false
+                                    }
+                                    val destLabel = stringResource(dest.labelResId)
+                                    NavigationRailItem(
+                                        selected = selected,
+                                        onClick = { navigateTopLevel(dest.route) },
+                                        icon = {
+                                            Icon(
+                                                imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
+                                                contentDescription = destLabel
+                                            )
+                                        },
+                                        label = { Text(destLabel) },
+                                        colors = NavigationRailItemDefaults.colors(
+                                            selectedIconColor = ObsidianBg,
+                                            selectedTextColor = TelemetryEmerald,
+                                            indicatorColor = TelemetryEmerald
+                                        ),
+                                        modifier = Modifier.testTag(dest.testTag)
+                                    )
                                 }
-                                NavigationRailItem(
-                                    selected = selected,
-                                    onClick = { navigateTopLevel(dest.route) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                            contentDescription = dest.label
-                                        )
-                                    },
-                                    label = { Text(dest.label) },
-                                    colors = NavigationRailItemDefaults.colors(
-                                        selectedIconColor = ObsidianBg,
-                                        selectedTextColor = TelemetryEmerald,
-                                        indicatorColor = TelemetryEmerald
-                                    ),
-                                    modifier = Modifier.testTag(dest.testTag)
-                                )
                             }
                         }
-                    }
 
                     NavHost(
                         navController = navController,
@@ -459,9 +481,14 @@ private fun YvGpsCamApp(
                                 onOpenOfflineMaps = { navigateTopLevel(OfflineMapsRoute) },
                                 onOpenCloudSync = { navigateTopLevel(CloudSyncRoute) },
                                 autoPushUpdatesEnabled = autoPushUpdates,
+                                autoOpenAfterUpdateEnabled = autoOpenAfterUpdate,
                                 manifestFeedUrl = manifestFeedUrl,
+                                updateState = appUpdateState,
                                 onToggleAutoPushUpdates = { enabled ->
                                     container.appUpdateCoordinator.setAutoPushEnabled(enabled)
+                                },
+                                onToggleAutoOpenAfterUpdate = { enabled ->
+                                    container.appUpdateCoordinator.setAutoOpenAfterUpdateEnabled(enabled)
                                 },
                                 onUpdateManifestFeedUrl = { url ->
                                     container.appUpdateCoordinator.setManifestFeedUrl(url)
@@ -470,9 +497,10 @@ private fun YvGpsCamApp(
                                     container.appUpdateCoordinator.checkForUpdates(
                                         forceShowIfDismissed = true,
                                         onUpToDate = {
+                                            val info = `in`.yourview.yvgpscam.util.AppUpdateCoordinator.resolveInstalledBuildInfo(localContext)
                                             Toast.makeText(
                                                 localContext,
-                                                "YVGPSCAM v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) is up to date",
+                                                "YVGPSCAM v${info.versionName} (Build ${info.versionCode}) is up to date",
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         }
@@ -562,5 +590,6 @@ private fun YvGpsCamApp(
                 )
             }
         }
+    }
     }
 }

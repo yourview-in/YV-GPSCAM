@@ -397,6 +397,7 @@ private fun AdvanceOrClassicStampCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScanLocationStampCard(
     telemetry: GpsTelemetry,
@@ -422,84 +423,148 @@ private fun ScanLocationStampCard(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(8.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Image(
-                    bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "Scan QR to open location in Google Maps",
-                    modifier = Modifier
-                        .size((72f * scale).dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.White)
-                        .padding(3.dp)
-                )
-                Text(
-                    text = "SCAN LOCATION",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 7.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ShutterGold
-                )
-            }
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = "${telemetry.displayHeadlineAddress}$flagSuffix",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = (12.5f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (telemetry.addressLine.isNotBlank()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "Scan QR to open location in Google Maps",
+                        modifier = Modifier
+                            .size((72f * scale).dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White)
+                            .padding(3.dp)
+                    )
                     Text(
-                        text = telemetry.addressLine,
-                        color = Color(0xFFD0DCE5),
-                        fontSize = (9.2f * scale).sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        text = "SCAN LOCATION",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 7.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ShutterGold
                     )
                 }
-                Text(
-                    text = telemetry.formatCoordinates(config.coordinateFormat),
-                    color = TelemetryEmerald,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = (9f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = telemetry.formatTimestamp(config.dateTimeFormat),
-                    color = Color(0xFFB8C7D4),
-                    fontSize = (8.8f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (config.showShortAddress) {
+                        Text(
+                            text = "${telemetry.displayHeadlineAddress}$flagSuffix",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (12.5f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (flagSuffix.isNotBlank()) {
+                        Text(
+                            text = flagSuffix.trim(),
+                            fontSize = (12f * scale).sp
+                        )
+                    }
+                    if (config.showAddress && telemetry.addressLine.isNotBlank()) {
+                        Text(
+                            text = telemetry.addressLine,
+                            color = Color(0xFFD0DCE5),
+                            fontSize = (9.2f * scale).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val plusStr = if (config.showPlusCode && telemetry.plusCode != null) "Plus Code : ${telemetry.plusCode}" else ""
+                    val coordStr = if (config.showCoordinates) telemetry.formatCoordinates(config.coordinateFormat) else ""
+                    val combinedCoord = listOf(plusStr, coordStr).filter { it.isNotBlank() }.joinToString(" • ")
+                    if (combinedCoord.isNotBlank()) {
+                        Text(
+                            text = combinedCoord,
+                            color = TelemetryEmerald,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = (9f * scale).sp,
+                            maxLines = if (plusStr.isNotBlank() && coordStr.isNotBlank()) 2 else 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val timeParts = buildList {
+                        if (config.showDateTime) add(telemetry.formatTimestamp(config.dateTimeFormat))
+                        if (config.showTimeZone) add(telemetry.formatTimeZoneOffset())
+                        if (config.showNumbering) add("#${config.photoSequenceNumber}")
+                    }
+                    if (timeParts.isNotEmpty()) {
+                        Text(
+                            text = timeParts.joinToString(" • "),
+                            color = Color(0xFFB8C7D4),
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showPersonName && config.personName.isNotBlank()) {
+                        Text(
+                            text = "Person : ${config.personName.trim()}",
+                            color = TelemetryEmerald,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showNote && config.customNote.isNotBlank()) {
+                        Text(
+                            text = "Note : ${config.customNote.trim()}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                BrandWatermarkColumn(
+                    config = config,
+                    telemetry = telemetry,
+                    titleColor = Color.White,
+                    primaryFont = PlusJakartaSansFontFamily,
+                    scale = scale,
+                    logoAlpha = config.logoOpacity,
+                    isFrontCamera = isFrontCamera
                 )
             }
 
-            BrandWatermarkColumn(
-                config = config,
-                telemetry = telemetry,
-                titleColor = Color.White,
-                primaryFont = PlusJakartaSansFontFamily,
-                scale = scale,
-                logoAlpha = config.logoOpacity,
-                isFrontCamera = isFrontCamera
-            )
+            val metricItems = buildTelemetryMetricItems(telemetry, config)
+            if (metricItems.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    metricItems.forEach { (icon, tint, label) ->
+                        MetricChipItem(
+                            icon = icon,
+                            tint = tint,
+                            label = label,
+                            textColor = Color.White,
+                            scale = scale
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DateTimeStampCard(
     telemetry: GpsTelemetry,
@@ -515,6 +580,7 @@ private fun DateTimeStampCard(
     val timeOnly = remember(now) { SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(now)) }
     val dateOnly = remember(now) { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(now)) }
     val weekdayOnly = remember(now) { SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(now)) }
+    val flagSuffix = if (config.showCountryFlag && telemetry.countryFlagEmoji.isNotBlank()) " ${telemetry.countryFlagEmoji}" else ""
 
     Box(
         modifier = modifier
@@ -525,93 +591,174 @@ private fun DateTimeStampCard(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(10.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = timeOnly,
-                        color = Color.White,
-                        fontFamily = SpaceGroteskFontFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = (20f * scale).sp,
-                        maxLines = 1
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(2.5.dp)
-                            .height(26.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(ShutterGold)
-                    )
-                    Column {
+                    if (config.showDateTime) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = timeOnly,
+                                color = Color.White,
+                                fontFamily = SpaceGroteskFontFamily,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = (20f * scale).sp,
+                                maxLines = 1
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(2.5.dp)
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(ShutterGold)
+                            )
+                            Column {
+                                Text(
+                                    text = dateOnly,
+                                    color = ShutterGold,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = (10.5f * scale).sp
+                                )
+                                Text(
+                                    text = weekdayOnly,
+                                    color = Color(0xFFD0DCE5),
+                                    fontSize = (9.5f * scale).sp
+                                )
+                            }
+                        }
+                    }
+
+                    val extras = buildList {
+                        if (config.showTimeZone) add(telemetry.formatTimeZoneOffset(now))
+                        if (config.showNumbering) add("#${config.photoSequenceNumber}")
+                    }
+                    if (extras.isNotEmpty()) {
                         Text(
-                            text = dateOnly,
+                            text = extras.joinToString(" • "),
                             color = ShutterGold,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = (10.5f * scale).sp
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                    }
+
+                    if (config.showShortAddress) {
                         Text(
-                            text = weekdayOnly,
+                            text = "${telemetry.displayHeadlineAddress}$flagSuffix",
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = (11f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (flagSuffix.isNotBlank()) {
+                        Text(
+                            text = flagSuffix.trim(),
+                            fontSize = (11f * scale).sp
+                        )
+                    }
+                    if (config.showAddress && telemetry.addressLine.isNotBlank()) {
+                        Text(
+                            text = telemetry.addressLine,
                             color = Color(0xFFD0DCE5),
-                            fontSize = (9.5f * scale).sp
+                            fontSize = (9f * scale).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val plusStr = if (config.showPlusCode && telemetry.plusCode != null) "Plus Code : ${telemetry.plusCode}" else ""
+                    val coordStr = if (config.showCoordinates) telemetry.formatCoordinates(config.coordinateFormat) else ""
+                    val combinedCoord = listOf(plusStr, coordStr).filter { it.isNotBlank() }.joinToString(" • ")
+                    if (combinedCoord.isNotBlank()) {
+                        Text(
+                            text = combinedCoord,
+                            color = TelemetryEmerald,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = (9f * scale).sp,
+                            maxLines = if (plusStr.isNotBlank() && coordStr.isNotBlank()) 2 else 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showPersonName && config.personName.isNotBlank()) {
+                        Text(
+                            text = "Person : ${config.personName.trim()}",
+                            color = Color(0xFFD0DCE5),
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showNote && config.customNote.isNotBlank()) {
+                        Text(
+                            text = "Note : ${config.customNote.trim()}",
+                            color = Color.White,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                Text(
-                    text = telemetry.displayHeadlineAddress,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = (11f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = telemetry.formatCoordinates(config.coordinateFormat),
-                    color = TelemetryEmerald,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = (9f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
+                    Image(
+                        bitmap = miniMapBitmap.asImageBitmap(),
+                        contentDescription = "Mini-map preview",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size((54f * scale).dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                            .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
+                    )
+                }
+
+                BrandWatermarkColumn(
+                    config = config,
+                    telemetry = telemetry,
+                    titleColor = Color.White,
+                    primaryFont = PlusJakartaSansFontFamily,
+                    scale = scale * 0.9f,
+                    logoAlpha = config.logoOpacity,
+                    isFrontCamera = isFrontCamera
                 )
             }
 
-            if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
-                Image(
-                    bitmap = miniMapBitmap.asImageBitmap(),
-                    contentDescription = "Mini-map preview",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size((54f * scale).dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                        .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
-                )
+            val metricItems = buildTelemetryMetricItems(telemetry, config)
+            if (metricItems.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    metricItems.forEach { (icon, tint, label) ->
+                        MetricChipItem(
+                            icon = icon,
+                            tint = tint,
+                            label = label,
+                            textColor = Color.White,
+                            scale = scale
+                        )
+                    }
+                }
             }
-
-            BrandWatermarkColumn(
-                config = config,
-                telemetry = telemetry,
-                titleColor = Color.White,
-                primaryFont = PlusJakartaSansFontFamily,
-                scale = scale * 0.9f,
-                logoAlpha = config.logoOpacity,
-                isFrontCamera = isFrontCamera
-            )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReportingStampCard(
     telemetry: GpsTelemetry,
@@ -634,134 +781,180 @@ private fun ReportingStampCard(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
-                Image(
-                    bitmap = miniMapBitmap.asImageBitmap(),
-                    contentDescription = "Report mini-map",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .width((70f * scale).dp)
-                        .fillMaxHeight()
-                        .heightIn(min = (86f * scale).dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                        .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
-                )
-            }
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Box(
+                if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
+                    Image(
+                        bitmap = miniMapBitmap.asImageBitmap(),
+                        contentDescription = "Report mini-map",
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(TelemetryEmerald)
-                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                            .width((70f * scale).dp)
+                            .fillMaxHeight()
+                            .heightIn(min = (86f * scale).dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                            .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(TelemetryEmerald)
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF0A1410),
-                                modifier = Modifier.size(11.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0A1410),
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = config.reportingLabel.ifBlank { "Check In" },
+                                    color = Color(0xFF0A1410),
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                        if (config.showNumbering) {
                             Text(
-                                text = config.reportingLabel.ifBlank { "Check In" },
-                                color = Color(0xFF0A1410),
+                                text = "#${config.photoSequenceNumber}",
+                                color = ShutterGold,
+                                fontFamily = JetBrainsMonoFontFamily,
                                 fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
-                    if (config.showNumbering) {
+
+                    if (config.showShortAddress) {
                         Text(
-                            text = "#${config.photoSequenceNumber}",
-                            color = ShutterGold,
+                            text = "${telemetry.displayHeadlineAddress}$flagSuffix",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (12f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (flagSuffix.isNotBlank()) {
+                        Text(
+                            text = flagSuffix.trim(),
+                            fontSize = (11.5f * scale).sp
+                        )
+                    }
+                    if (config.showAddress && telemetry.addressLine.isNotBlank()) {
+                        Text(
+                            text = telemetry.addressLine,
+                            color = Color(0xFFD0DCE5),
+                            fontSize = (9f * scale).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val plusStr = if (config.showPlusCode && telemetry.plusCode != null) "Plus Code : ${telemetry.plusCode}" else ""
+                    val coordStr = if (config.showCoordinates) telemetry.formatCoordinates(config.coordinateFormat) else ""
+                    val combinedCoord = listOf(plusStr, coordStr).filter { it.isNotBlank() }.joinToString(" • ")
+                    if (combinedCoord.isNotBlank()) {
+                        Text(
+                            text = combinedCoord,
+                            color = TelemetryEmerald,
                             fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = if (plusStr.isNotBlank() && coordStr.isNotBlank()) 2 else 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val timeParts = buildList {
+                        if (config.showDateTime) add(telemetry.formatTimestamp(config.dateTimeFormat))
+                        if (config.showTimeZone) add(telemetry.formatTimeZoneOffset())
+                    }
+                    if (timeParts.isNotEmpty()) {
+                        Text(
+                            text = timeParts.joinToString(" • "),
+                            color = Color(0xFFB8C7D4),
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showPersonName && config.personName.isNotBlank()) {
+                        Text(
+                            text = "Inspector: ${config.personName.trim()}",
+                            color = ShutterGold,
+                            fontSize = (8.8f * scale).sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showNote && config.customNote.isNotBlank()) {
+                        Text(
+                            text = "Note: ${config.customNote.trim()}",
+                            color = Color.White,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                Text(
-                    text = "${telemetry.displayHeadlineAddress}$flagSuffix",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = (12f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                BrandWatermarkColumn(
+                    config = config,
+                    telemetry = telemetry,
+                    titleColor = Color.White,
+                    primaryFont = PlusJakartaSansFontFamily,
+                    scale = scale,
+                    logoAlpha = config.logoOpacity,
+                    isFrontCamera = isFrontCamera
                 )
-                if (telemetry.addressLine.isNotBlank()) {
-                    Text(
-                        text = telemetry.addressLine,
-                        color = Color(0xFFD0DCE5),
-                        fontSize = (9f * scale).sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Text(
-                    text = telemetry.formatCoordinates(config.coordinateFormat),
-                    color = TelemetryEmerald,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = (8.8f * scale).sp,
-                    maxLines = 1
-                )
-                Text(
-                    text = telemetry.formatTimestamp(config.dateTimeFormat),
-                    color = Color(0xFFB8C7D4),
-                    fontSize = (8.8f * scale).sp,
-                    maxLines = 1
-                )
-                if (config.personName.isNotBlank()) {
-                    Text(
-                        text = "Inspector: ${config.personName.trim()}",
-                        color = ShutterGold,
-                        fontSize = (8.8f * scale).sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
-                }
-                if (config.customNote.isNotBlank()) {
-                    Text(
-                        text = "Note: ${config.customNote.trim()}",
-                        color = Color.White,
-                        fontSize = (8.8f * scale).sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
             }
 
-            BrandWatermarkColumn(
-                config = config,
-                telemetry = telemetry,
-                titleColor = Color.White,
-                primaryFont = PlusJakartaSansFontFamily,
-                scale = scale,
-                logoAlpha = config.logoOpacity,
-                isFrontCamera = isFrontCamera
-            )
+            val metricItems = buildTelemetryMetricItems(telemetry, config)
+            if (metricItems.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    metricItems.forEach { (icon, tint, label) ->
+                        MetricChipItem(
+                            icon = icon,
+                            tint = tint,
+                            label = label,
+                            textColor = Color.White,
+                            scale = scale
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NavigationalCompassStampCard(
     telemetry: GpsTelemetry,
@@ -775,6 +968,7 @@ private fun NavigationalCompassStampCard(
     val scale = config.stampSize.scaleFactor
     val azimuth = telemetry.compassAzimuth
     val cardinal = telemetry.compassCardinal
+    val flagSuffix = if (config.showCountryFlag && telemetry.countryFlagEmoji.isNotBlank()) " ${telemetry.countryFlagEmoji}" else ""
 
     Box(
         modifier = modifier
@@ -785,178 +979,229 @@ private fun NavigationalCompassStampCard(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(8.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // Left Circular Azimuth Compass Dial + Facing Pill
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier.size((68f * scale).dp),
-                    contentAlignment = Alignment.Center
+                // Left Circular Azimuth Compass Dial + Facing Pill
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val center = Offset(size.width / 2f, size.height / 2f)
-                        val r = size.minDimension / 2f - 4.dp.toPx()
-                        drawCircle(
-                            color = Color(0xFF141E26),
-                            radius = r,
-                            center = center
-                        )
-                        drawCircle(
-                            color = ShutterGold.copy(alpha = 0.7f),
-                            radius = r,
-                            center = center,
-                            style = Stroke(width = 1.6.dp.toPx())
-                        )
-                        // Tick marks
-                        for (deg in 0 until 360 step 45) {
-                            val rad = Math.toRadians((deg - 90).toDouble())
-                            val inner = r * if (deg % 90 == 0) 0.72f else 0.84f
-                            drawLine(
-                                color = if (deg == 0) AlertCoral else Color.White.copy(alpha = 0.55f),
-                                start = Offset(
-                                    center.x + (inner * cos(rad)).toFloat(),
-                                    center.y + (inner * sin(rad)).toFloat()
-                                ),
-                                end = Offset(
-                                    center.x + (r * cos(rad)).toFloat(),
-                                    center.y + (r * sin(rad)).toFloat()
-                                ),
-                                strokeWidth = if (deg % 90 == 0) 1.8.dp.toPx() else 1.dp.toPx(),
-                                cap = StrokeCap.Round
+                    Box(
+                        modifier = Modifier.size((68f * scale).dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val r = size.minDimension / 2f - 4.dp.toPx()
+                            drawCircle(
+                                color = Color(0xFF141E26),
+                                radius = r,
+                                center = center
                             )
+                            drawCircle(
+                                color = ShutterGold.copy(alpha = 0.7f),
+                                radius = r,
+                                center = center,
+                                style = Stroke(width = 1.6.dp.toPx())
+                            )
+                            // Tick marks
+                            for (deg in 0 until 360 step 45) {
+                                val rad = Math.toRadians((deg - 90).toDouble())
+                                val inner = r * if (deg % 90 == 0) 0.72f else 0.84f
+                                drawLine(
+                                    color = if (deg == 0) AlertCoral else Color.White.copy(alpha = 0.55f),
+                                    start = Offset(
+                                        center.x + (inner * cos(rad)).toFloat(),
+                                        center.y + (inner * sin(rad)).toFloat()
+                                    ),
+                                    end = Offset(
+                                        center.x + (r * cos(rad)).toFloat(),
+                                        center.y + (r * sin(rad)).toFloat()
+                                    ),
+                                    strokeWidth = if (deg % 90 == 0) 1.8.dp.toPx() else 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+                            // Compass needle pointing to azimuth
+                            val needleRad = Math.toRadians((azimuth - 90f).toDouble())
+                            val tip = Offset(
+                                center.x + (r * 0.66f * cos(needleRad)).toFloat(),
+                                center.y + (r * 0.66f * sin(needleRad)).toFloat()
+                            )
+                            val tail = Offset(
+                                center.x - (r * 0.35f * cos(needleRad)).toFloat(),
+                                center.y - (r * 0.35f * sin(needleRad)).toFloat()
+                            )
+                            val leftWingRad = needleRad + Math.PI / 2
+                            val wingDist = r * 0.14f
+                            val path = Path().apply {
+                                moveTo(tip.x, tip.y)
+                                lineTo(
+                                    center.x + (wingDist * cos(leftWingRad)).toFloat(),
+                                    center.y + (wingDist * sin(leftWingRad)).toFloat()
+                                )
+                                lineTo(tail.x, tail.y)
+                                lineTo(
+                                    center.x - (wingDist * cos(leftWingRad)).toFloat(),
+                                    center.y - (wingDist * sin(leftWingRad)).toFloat()
+                                )
+                                close()
+                            }
+                            drawPath(path, color = ShutterGold)
+                            drawCircle(color = Color.White, radius = 3.dp.toPx(), center = center)
                         }
-                        // Compass needle pointing to azimuth
-                        val needleRad = Math.toRadians((azimuth - 90f).toDouble())
-                        val tip = Offset(
-                            center.x + (r * 0.66f * cos(needleRad)).toFloat(),
-                            center.y + (r * 0.66f * sin(needleRad)).toFloat()
+                        Text(
+                            text = "${azimuth.roundToInt()}°",
+                            color = Color.White,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp)
                         )
-                        val tail = Offset(
-                            center.x - (r * 0.35f * cos(needleRad)).toFloat(),
-                            center.y - (r * 0.35f * sin(needleRad)).toFloat()
-                        )
-                        val leftWingRad = needleRad + Math.PI / 2
-                        val wingDist = r * 0.14f
-                        val path = Path().apply {
-                            moveTo(tip.x, tip.y)
-                            lineTo(
-                                center.x + (wingDist * cos(leftWingRad)).toFloat(),
-                                center.y + (wingDist * sin(leftWingRad)).toFloat()
-                            )
-                            lineTo(tail.x, tail.y)
-                            lineTo(
-                                center.x - (wingDist * cos(leftWingRad)).toFloat(),
-                                center.y - (wingDist * sin(leftWingRad)).toFloat()
-                            )
-                            close()
-                        }
-                        drawPath(path, color = ShutterGold)
-                        drawCircle(color = Color.White, radius = 3.dp.toPx(), center = center)
                     }
-                    Text(
-                        text = "${azimuth.roundToInt()}°",
-                        color = Color.White,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 9.sp,
+
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 12.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ShutterGold)
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "Facing $cardinal",
+                            color = Color(0xFF141619),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+
+                // Right Location + Map + Telemetry Column
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (config.showShortAddress) {
+                        Text(
+                            text = "${telemetry.displayHeadlineAddress}$flagSuffix",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (12f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (flagSuffix.isNotBlank()) {
+                        Text(
+                            text = flagSuffix.trim(),
+                            fontSize = (11.5f * scale).sp
+                        )
+                    }
+                    if (config.showAddress && telemetry.addressLine.isNotBlank()) {
+                        Text(
+                            text = telemetry.addressLine,
+                            color = Color(0xFFD0DCE5),
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val plusStr = if (config.showPlusCode && telemetry.plusCode != null) "Plus Code : ${telemetry.plusCode}" else ""
+                    val coordStr = if (config.showCoordinates) telemetry.formatCoordinates(config.coordinateFormat) else ""
+                    val combinedCoord = listOf(plusStr, coordStr).filter { it.isNotBlank() }.joinToString(" • ")
+                    if (combinedCoord.isNotBlank()) {
+                        Text(
+                            text = combinedCoord,
+                            color = TelemetryEmerald,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = (8.8f * scale).sp,
+                            maxLines = if (plusStr.isNotBlank() && coordStr.isNotBlank()) 2 else 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    val timeParts = buildList {
+                        if (config.showDateTime) add(telemetry.formatTimestamp(config.dateTimeFormat))
+                        if (config.showTimeZone) add(telemetry.formatTimeZoneOffset())
+                        if (config.showNumbering) add("#${config.photoSequenceNumber}")
+                    }
+                    if (timeParts.isNotEmpty()) {
+                        Text(
+                            text = timeParts.joinToString(" • "),
+                            color = Color(0xFFD0DCE5),
+                            fontSize = (8.5f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showPersonName && config.personName.isNotBlank()) {
+                        Text(
+                            text = "Person : ${config.personName.trim()}",
+                            color = ShutterGold,
+                            fontSize = (8.5f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (config.showNote && config.customNote.isNotBlank()) {
+                        Text(
+                            text = "Note : ${config.customNote.trim()}",
+                            color = Color.White,
+                            fontSize = (8.5f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
+                    Image(
+                        bitmap = miniMapBitmap.asImageBitmap(),
+                        contentDescription = "Compass mini-map",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size((48f * scale).dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                            .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(ShutterGold)
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = "Facing $cardinal",
-                        color = Color(0xFF141619),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
+                BrandWatermarkColumn(
+                    config = config,
+                    telemetry = telemetry,
+                    titleColor = Color.White,
+                    primaryFont = PlusJakartaSansFontFamily,
+                    scale = scale * 0.88f,
+                    logoAlpha = config.logoOpacity,
+                    isFrontCamera = isFrontCamera
+                )
             }
 
-            // Right Location + Map + Telemetry Column
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = telemetry.displayHeadlineAddress,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = (12f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = telemetry.formatCoordinates(config.coordinateFormat),
-                    color = TelemetryEmerald,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = (8.8f * scale).sp,
-                    maxLines = 1
-                )
-                Text(
-                    text = telemetry.formatTimestamp(config.dateTimeFormat),
-                    color = Color(0xFFD0DCE5),
-                    fontSize = (8.5f * scale).sp,
-                    maxLines = 1
-                )
-                Row(
+            val metricItems = buildTelemetryMetricItems(telemetry, config)
+            if (metricItems.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    val altText = telemetry.altitudeMeters?.let { "${it.roundToInt()} m" } ?: "-- m"
-                    val magText = telemetry.magneticFieldMicroTesla?.let { "${it.roundToInt()} µT" } ?: "-- µT"
-                    Text(
-                        text = "Alt $altText",
-                        color = ShutterGold,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = magText,
-                        color = SignalCyan,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    metricItems.forEach { (icon, tint, label) ->
+                        MetricChipItem(
+                            icon = icon,
+                            tint = tint,
+                            label = label,
+                            textColor = Color.White,
+                            scale = scale
+                        )
+                    }
                 }
             }
-
-            if (config.showMiniMap && miniMapBitmap != null && !miniMapBitmap.isRecycled) {
-                Image(
-                    bitmap = miniMapBitmap.asImageBitmap(),
-                    contentDescription = "Compass mini-map",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size((48f * scale).dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                        .then(if (onMiniMapClick != null) Modifier.clickable(onClick = onMiniMapClick) else Modifier)
-                )
-            }
-
-            BrandWatermarkColumn(
-                config = config,
-                telemetry = telemetry,
-                titleColor = Color.White,
-                primaryFont = PlusJakartaSansFontFamily,
-                scale = scale * 0.88f,
-                logoAlpha = config.logoOpacity,
-                isFrontCamera = isFrontCamera
-            )
         }
     }
 }

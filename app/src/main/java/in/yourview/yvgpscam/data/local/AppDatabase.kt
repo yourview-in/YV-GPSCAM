@@ -36,6 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "yvgpscam_database"
                 )
                     .addMigrations(MIGRATION_1_2)
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                     .build()
                     .also { INSTANCE = it }
             }

@@ -22,11 +22,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.AddLocationAlt
@@ -71,11 +74,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import `in`.yourview.yvgpscam.R
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
 import `in`.yourview.yvgpscam.data.model.StampConfig
 import `in`.yourview.yvgpscam.ui.theme.FocusReticleGreen
@@ -145,6 +150,7 @@ fun CameraQuickToolsDrawer(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -163,7 +169,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = Icons.Rounded.Grid4x4,
-                    label = "Grid",
+                    label = stringResource(R.string.camera_tool_grid),
                     active = hudState.showGrid,
                     onClick = onToggleGrid,
                     testTag = "quick_tool_grid",
@@ -171,7 +177,11 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = Icons.Rounded.Timer,
-                    label = if (config.timerDelaySeconds > 0) "Timer ${config.timerDelaySeconds}s" else "Timer",
+                    label = if (config.timerDelaySeconds > 0) {
+                        "${stringResource(R.string.camera_tool_timer)} ${config.timerDelaySeconds}s"
+                    } else {
+                        stringResource(R.string.camera_tool_timer)
+                    },
                     active = config.timerDelaySeconds > 0,
                     onClick = onCycleTimer,
                     testTag = "quick_tool_timer",
@@ -179,7 +189,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = if (hudState.isFullScreenCamera) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
-                    label = "Full View",
+                    label = stringResource(R.string.camera_tool_full_view),
                     active = hudState.isFullScreenCamera,
                     onClick = onToggleFullView,
                     testTag = "quick_tool_full_view",
@@ -194,7 +204,7 @@ fun CameraQuickToolsDrawer(
             ) {
                 QuickToolTile(
                     icon = Icons.Rounded.MotionPhotosAuto,
-                    label = if (isAutoCaptureMode) "Auto ${hudState.autoCaptureIntervalSeconds}s" else "Auto Cap",
+                    label = if (isAutoCaptureMode) "Auto ${hudState.autoCaptureIntervalSeconds}s" else stringResource(R.string.camera_tool_auto_cap),
                     active = isAutoCaptureMode,
                     activeColor = TelemetryEmerald,
                     onClick = onToggleAutoCapture,
@@ -203,7 +213,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = Icons.Rounded.BurstMode,
-                    label = if (isBurstMode) "3x Burst" else "Burst",
+                    label = if (isBurstMode) "3x ${stringResource(R.string.camera_tool_burst)}" else stringResource(R.string.camera_tool_burst),
                     active = isBurstMode,
                     onClick = onToggleBurstMode,
                     testTag = "quick_tool_burst",
@@ -211,7 +221,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = if (isTorchEnabled) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
-                    label = if (isTorchEnabled) "Torch ON" else "Torch",
+                    label = if (isTorchEnabled) "${stringResource(R.string.camera_tool_torch)} ON" else stringResource(R.string.camera_tool_torch),
                     active = isTorchEnabled,
                     onClick = onToggleTorch,
                     testTag = "quick_tool_torch",
@@ -219,7 +229,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = Icons.Rounded.ScreenRotation,
-                    label = "Level",
+                    label = stringResource(R.string.camera_tool_level),
                     active = config.showDigitalLevel,
                     onClick = onToggleLevel,
                     testTag = "quick_tool_level",
@@ -234,7 +244,7 @@ fun CameraQuickToolsDrawer(
             ) {
                 QuickToolTile(
                     icon = Icons.Rounded.Flip,
-                    label = "Mirror",
+                    label = stringResource(R.string.camera_tool_mirror),
                     active = config.mirrorFrontCamera,
                     onClick = onToggleMirror,
                     testTag = "quick_tool_mirror",
@@ -242,7 +252,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = if (config.recordVideoWithVoice) Icons.Rounded.Mic else Icons.Rounded.MicOff,
-                    label = "Voice",
+                    label = stringResource(R.string.camera_tool_voice),
                     active = config.recordVideoWithVoice,
                     onClick = onToggleVoice,
                     testTag = "quick_tool_voice",
@@ -258,7 +268,7 @@ fun CameraQuickToolsDrawer(
                 )
                 QuickToolTile(
                     icon = Icons.Rounded.OfflinePin,
-                    label = if (config.offlineOnlyMapMode) "Offline ON" else "Offline",
+                    label = if (config.offlineOnlyMapMode) "${stringResource(R.string.camera_tool_offline)} ON" else stringResource(R.string.camera_tool_offline),
                     active = config.offlineOnlyMapMode,
                     activeColor = TelemetryEmerald,
                     onClick = onToggleOfflineMapMode,
@@ -329,43 +339,57 @@ fun CameraQuickToolsDrawer(
                 }
             }
 
-            // Bottom Stadium Pill Action Bar: Stamp Pos | Note | Stamp Photo | Drive Sync
-            Row(
+            // Bottom Balanced 2x2 Pill Action Grid (full labels, zero truncation, 48dp touch height)
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                DrawerPillButton(
-                    icon = Icons.Rounded.AddLocationAlt,
-                    label = config.stampPosition.shortLabel,
-                    accent = Color.White,
-                    onClick = onCycleStampPosition,
-                    testTag = "camera_stamp_position_button",
-                    modifier = Modifier.weight(1f)
-                )
-                DrawerPillButton(
-                    icon = Icons.Rounded.EditNote,
-                    label = if (config.customNote.isNotBlank()) "Note ON" else "Add Text",
-                    accent = if (config.customNote.isNotBlank()) ShutterGold else Color.White,
-                    onClick = onOpenNoteDialog,
-                    testTag = "quick_tool_note",
-                    modifier = Modifier.weight(1f)
-                )
-                DrawerPillButton(
-                    icon = Icons.Rounded.Collections,
-                    label = "Stamp",
-                    accent = ShutterGold,
-                    onClick = onImportPhoto,
-                    testTag = "quick_tool_import",
-                    modifier = Modifier.weight(1f)
-                )
-                DrawerPillButton(
-                    icon = Icons.Rounded.CloudUpload,
-                    label = "Drive",
-                    accent = TelemetryEmerald,
-                    onClick = onOpenDriveSync,
-                    testTag = "quick_tool_drive",
-                    modifier = Modifier.weight(1f)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DrawerPillButton(
+                        icon = Icons.Rounded.AddLocationAlt,
+                        label = "Pos: ${config.stampPosition.shortLabel}",
+                        accent = Color.White,
+                        onClick = onCycleStampPosition,
+                        testTag = "camera_stamp_position_button",
+                        modifier = Modifier.weight(1f)
+                    )
+                    DrawerPillButton(
+                        icon = Icons.Rounded.EditNote,
+                        label = if (config.customNote.isNotBlank()) {
+                            stringResource(R.string.camera_pill_note_added)
+                        } else {
+                            stringResource(R.string.camera_pill_add_text)
+                        },
+                        accent = if (config.customNote.isNotBlank()) ShutterGold else Color.White,
+                        onClick = onOpenNoteDialog,
+                        testTag = "quick_tool_note",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DrawerPillButton(
+                        icon = Icons.Rounded.Collections,
+                        label = stringResource(R.string.camera_pill_stamp_photo),
+                        accent = ShutterGold,
+                        onClick = onImportPhoto,
+                        testTag = "quick_tool_import",
+                        modifier = Modifier.weight(1f)
+                    )
+                    DrawerPillButton(
+                        icon = Icons.Rounded.CloudUpload,
+                        label = stringResource(R.string.camera_pill_google_drive),
+                        accent = TelemetryEmerald,
+                        onClick = onOpenDriveSync,
+                        testTag = "quick_tool_drive",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -384,13 +408,14 @@ private fun DrawerPillButton(
         color = Color.White.copy(alpha = 0.08f),
         shape = CircleShape,
         modifier = modifier
+            .heightIn(min = 48.dp)
             .clip(CircleShape)
             .border(0.9.dp, accent.copy(alpha = 0.34f), CircleShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -398,15 +423,16 @@ private fun DrawerPillButton(
                 imageVector = icon,
                 contentDescription = label,
                 tint = accent,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(16.dp)
             )
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
                 text = label,
                 color = Color.White,
-                fontSize = 10.5.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
         }

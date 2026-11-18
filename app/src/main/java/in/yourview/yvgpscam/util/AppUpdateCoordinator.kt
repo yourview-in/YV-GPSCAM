@@ -30,6 +30,7 @@ import com.google.android.play.core.install.InstallStateUpdatedListener
 import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.InstallStatus
 import com.google.android.play.core.install.model.UpdateAvailability
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,7 +42,19 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+data class InstalledBuildInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val packageName: String,
+    val deviceModel: String,
+    val androidVersion: String,
+    val buildDisplay: String
+)
 
 data class AppUpdateInfoState(
     val currentVersionName: String,
@@ -53,6 +66,7 @@ data class AppUpdateInfoState(
     val isDownloaded: Boolean = false,
     val isDownloading: Boolean = false,
     val downloadProgressPercent: Int? = null,
+    val statusDetail: String? = null,
     val storeUrl: String? = null,
     val playAppUpdateInfo: AppUpdateInfo? = null
 ) {
@@ -66,7 +80,7 @@ class AppUpdateCoordinator(
     private val appContext: Context,
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 ) {
 
@@ -89,8 +103,19 @@ class AppUpdateCoordinator(
     private val _autoPushEnabled = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PUSH_ENABLED, true))
     val autoPushEnabled: StateFlow<Boolean> = _autoPushEnabled.asStateFlow()
 
-    private val _manifestFeedUrl = MutableStateFlow(prefs.getString(KEY_MANIFEST_FEED_URL, "").orEmpty())
+    private val _autoOpenAfterUpdateEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_OPEN_AFTER_UPDATE, true)
+    )
+    val autoOpenAfterUpdateEnabled: StateFlow<Boolean> = _autoOpenAfterUpdateEnabled.asStateFlow()
+
+    private val _manifestFeedUrl = MutableStateFlow(
+        prefs.getString(KEY_MANIFEST_FEED_URL, "").orEmpty()
+            .ifBlank { BuildConfig.DEFAULT_UPDATE_MANIFEST_URL }
+    )
     val manifestFeedUrl: StateFlow<String> = _manifestFeedUrl.asStateFlow()
+
+    private val _postUpdateBanner = MutableStateFlow<String?>(null)
+    val postUpdateBanner: StateFlow<String?> = _postUpdateBanner.asStateFlow()
 
     private var listenerRegistered = false
     private var lastAutoCheckMillis = 0L
@@ -102,7 +127,8 @@ class AppUpdateCoordinator(
                 val pct = ((state.bytesDownloaded() * 100L) / total).toInt().coerceIn(0, 100)
                 _updateState.value = _updateState.value?.copy(
                     isDownloading = true,
-                    downloadProgressPercent = pct
+                    downloadProgressPercent = pct,
+                    statusDetail = "Downloading update inside YVGPSCAM ($pct%)..."
                 )
             }
             InstallStatus.DOWNLOADED -> {
@@ -115,9 +141,14 @@ class AppUpdateCoordinator(
                 )).copy(
                     isDownloading = false,
                     downloadProgressPercent = 100,
-                    isDownloaded = true
+                    isDownloaded = true,
+                    statusDetail = "Download complete — installing and restarting app..."
                 )
                 _updateState.value = updated
+                if (_autoOpenAfterUpdateEnabled.value) {
+                    prefs.edit().putBoolean(KEY_PENDING_AUTO_RELAUNCH, true).apply()
+                    completeFlexibleUpdate()
+                }
             }
             InstallStatus.INSTALLED -> {
                 _updateState.value = null
@@ -126,11 +157,37 @@ class AppUpdateCoordinator(
             InstallStatus.FAILED, InstallStatus.CANCELED -> {
                 _updateState.value = _updateState.value?.copy(
                     isDownloading = false,
-                    downloadProgressPercent = null
+                    downloadProgressPercent = null,
+                    statusDetail = "Update paused. Tap Update Now to retry."
                 )
             }
             else -> Unit
         }
+    }
+
+    fun checkAndRecordInstalledVersionChange(openedFromReceiver: Boolean): String? {
+        val installed = resolveInstalledBuildInfo(appContext)
+        val prevCode = prefs.getInt(KEY_LAST_SEEN_VERSION_CODE, -1)
+        val prevName = prefs.getString(KEY_LAST_SEEN_VERSION_NAME, "").orEmpty()
+        val hasChanged = (prevCode != -1 && prevCode != installed.versionCode) ||
+            (prevName.isNotBlank() && prevName != installed.versionName)
+
+        prefs.edit()
+            .putInt(KEY_LAST_SEEN_VERSION_CODE, installed.versionCode)
+            .putString(KEY_LAST_SEEN_VERSION_NAME, installed.versionName)
+            .putBoolean(KEY_PENDING_AUTO_RELAUNCH, false)
+            .apply()
+
+        if (openedFromReceiver || hasChanged) {
+            val message = "YVGPSCAM updated to v${installed.versionName} (Build ${installed.versionCode})"
+            _postUpdateBanner.value = message
+            return message
+        }
+        return null
+    }
+
+    fun clearPostUpdateBanner() {
+        _postUpdateBanner.value = null
     }
 
     fun setAutoPushEnabled(enabled: Boolean) {
@@ -143,10 +200,18 @@ class AppUpdateCoordinator(
         }
     }
 
+    fun setAutoOpenAfterUpdateEnabled(enabled: Boolean) {
+        _autoOpenAfterUpdateEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_AUTO_OPEN_AFTER_UPDATE, enabled).apply()
+    }
+
     fun setManifestFeedUrl(url: String) {
         val clean = url.trim()
-        _manifestFeedUrl.value = clean
         prefs.edit().putString(KEY_MANIFEST_FEED_URL, clean).apply()
+        _manifestFeedUrl.value = clean.ifBlank { BuildConfig.DEFAULT_UPDATE_MANIFEST_URL }
+        if (_manifestFeedUrl.value.startsWith("https://", ignoreCase = true)) {
+            checkForUpdates(forceShowIfDismissed = true)
+        }
     }
 
     fun schedulePeriodicUpdateChecks() {
@@ -183,9 +248,10 @@ class AppUpdateCoordinator(
         lastAutoCheckMillis = now
         _isChecking.value = true
 
+        val installed = resolveInstalledBuildInfo(appContext)
         val manager = appUpdateManager
         if (manager == null) {
-            checkRemoteManifestFallback(forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
+            checkRemoteManifestFallback(installed, forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
             return
         }
 
@@ -195,11 +261,12 @@ class AppUpdateCoordinator(
                     if (info.installStatus() == InstallStatus.DOWNLOADED) {
                         _isChecking.value = false
                         val downloadedState = AppUpdateInfoState(
-                            currentVersionName = BuildConfig.VERSION_NAME,
-                            currentVersionCode = BuildConfig.VERSION_CODE,
+                            currentVersionName = installed.versionName,
+                            currentVersionCode = installed.versionCode,
                             availableVersionCode = info.availableVersionCode(),
                             availableVersionLabel = "Build ${info.availableVersionCode()}",
                             isDownloaded = true,
+                            statusDetail = "Download complete — ready to install & reopen app.",
                             playAppUpdateInfo = info
                         )
                         _updateState.value = downloadedState
@@ -219,8 +286,8 @@ class AppUpdateCoordinator(
                             val dismissedCode = prefs.getInt(KEY_DISMISSED_VERSION_CODE, -1)
                             val isMandatory = staleness >= MANDATORY_STALENESS_DAYS && immediateAllowed
                             val updateObj = AppUpdateInfoState(
-                                currentVersionName = BuildConfig.VERSION_NAME,
-                                currentVersionCode = BuildConfig.VERSION_CODE,
+                                currentVersionName = installed.versionName,
+                                currentVersionCode = installed.versionCode,
                                 availableVersionCode = availableCode,
                                 availableVersionLabel = "Build $availableCode",
                                 isImmediateRequired = isMandatory,
@@ -236,17 +303,18 @@ class AppUpdateCoordinator(
                         }
                     }
 
-                    checkRemoteManifestFallback(forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
+                    checkRemoteManifestFallback(installed, forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
                 }
                 .addOnFailureListener {
-                    checkRemoteManifestFallback(forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
+                    checkRemoteManifestFallback(installed, forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
                 }
         }.onFailure {
-            checkRemoteManifestFallback(forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
+            checkRemoteManifestFallback(installed, forceShowIfDismissed, pushNotificationIfFound, onUpToDate)
         }
     }
 
     private fun checkRemoteManifestFallback(
+        installed: InstalledBuildInfo,
         forceShowIfDismissed: Boolean,
         pushNotificationIfFound: Boolean,
         onUpToDate: () -> Unit
@@ -261,13 +329,18 @@ class AppUpdateCoordinator(
         scope.launch {
             val foundState = withContext(Dispatchers.IO) {
                 runCatching {
-                    val req = Request.Builder().url(feedUrl).build()
+                    val req = Request.Builder()
+                        .url(feedUrl)
+                        .header("Cache-Control", "no-cache")
+                        .build()
                     httpClient.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) return@use null
                         val body = resp.body?.string().orEmpty()
                         if (body.isBlank()) return@use null
                         evaluateManifestJson(
                             manifestJson = body,
+                            currentVersionCode = installed.versionCode,
+                            currentVersionName = installed.versionName,
                             forceShow = forceShowIfDismissed
                         )
                     }
@@ -292,17 +365,20 @@ class AppUpdateCoordinator(
         if (manager != null) {
             runCatching {
                 manager.appUpdateInfo.addOnSuccessListener { info ->
+                    val installed = resolveInstalledBuildInfo(appContext)
                     when {
                         info.installStatus() == InstallStatus.DOWNLOADED -> {
                             _updateState.value = (_updateState.value ?: AppUpdateInfoState(
-                                currentVersionName = BuildConfig.VERSION_NAME,
-                                currentVersionCode = BuildConfig.VERSION_CODE,
+                                currentVersionName = installed.versionName,
+                                currentVersionCode = installed.versionCode,
                                 availableVersionCode = info.availableVersionCode(),
                                 availableVersionLabel = "Build ${info.availableVersionCode()}",
                                 playAppUpdateInfo = info
                             )).copy(
                                 isDownloaded = true,
                                 isDownloading = false,
+                                downloadProgressPercent = 100,
+                                statusDetail = "Download complete — ready to install & reopen app.",
                                 playAppUpdateInfo = info
                             )
                         }
@@ -337,9 +413,15 @@ class AppUpdateCoordinator(
             return
         }
 
+        if (_autoOpenAfterUpdateEnabled.value) {
+            prefs.edit().putBoolean(KEY_PENDING_AUTO_RELAUNCH, true).apply()
+        }
+
         if (manager != null && playInfo != null) {
+            // Prefer IMMEDIATE when allowed so Play handles in-app download, install & auto-restart seamlessly;
+            // otherwise use FLEXIBLE with live progress and auto-complete on DOWNLOADED.
             val updateType = when {
-                current.isImmediateRequired && playInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE) -> AppUpdateType.IMMEDIATE
+                playInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE) -> AppUpdateType.IMMEDIATE
                 playInfo.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE) -> AppUpdateType.FLEXIBLE
                 else -> AppUpdateType.IMMEDIATE
             }
@@ -355,17 +437,105 @@ class AppUpdateCoordinator(
                 )
             }.getOrDefault(false)
             if (started) {
-                if (updateType == AppUpdateType.FLEXIBLE) {
-                    _updateState.value = current.copy(isDownloading = true)
-                }
+                _updateState.value = current.copy(
+                    isDownloading = true,
+                    statusDetail = "Downloading and installing update in app..."
+                )
                 return
             }
         }
 
-        openStoreListing(activity, current.storeUrl)
+        val targetUrl = current.storeUrl?.trim().orEmpty()
+        if (targetUrl.startsWith("https://", ignoreCase = true) && targetUrl.lowercase(Locale.US).contains(".apk")) {
+            startInAppApkDownloadAndHandOff(activity, current, targetUrl)
+        } else {
+            openStoreListing(activity, current.storeUrl)
+        }
     }
 
+    private fun startInAppApkDownloadAndHandOff(
+        activity: Activity,
+        current: AppUpdateInfoState,
+        apkUrl: String
+    ) {
+        if (current.isDownloading) return
+        _updateState.value = current.copy(
+            isDownloading = true,
+            downloadProgressPercent = 0,
+            statusDetail = "Downloading YVGPSCAM ${current.availableVersionLabel}..."
+        )
+
+        scope.launch {
+            val cachedApk = withContext(Dispatchers.IO) {
+                downloadApkWithProgress(apkUrl) { pct ->
+                    scope.launch {
+                        _updateState.value = _updateState.value?.copy(
+                            isDownloading = true,
+                            downloadProgressPercent = pct,
+                            statusDetail = if (pct != null) {
+                                "Downloading update ($pct%)..."
+                            } else {
+                                "Downloading update..."
+                            }
+                        )
+                    }
+                }
+            }
+
+            _updateState.value = _updateState.value?.copy(
+                isDownloading = false,
+                downloadProgressPercent = if (cachedApk != null) 100 else null,
+                statusDetail = "Opening installer — YVGPSCAM will reopen after update finishes."
+            )
+
+            // Compliant handoff via ACTION_VIEW (no restricted REQUEST_INSTALL_PACKAGES permission)
+            openStoreListing(activity, apkUrl)
+        }
+    }
+
+    private fun downloadApkWithProgress(
+        apkUrl: String,
+        onProgress: (Int?) -> Unit
+    ): File? = runCatching {
+        val updatesDir = File(appContext.cacheDir, "updates").apply { mkdirs() }
+        val outFile = File(updatesDir, "yvgpscam-update-preview.apk")
+        val req = Request.Builder().url(apkUrl).build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@runCatching null
+            val body = resp.body ?: return@runCatching null
+            val totalBytes = body.contentLength()
+            var downloadedBytes = 0L
+            var lastReportedPct = -1
+
+            body.byteStream().use { input ->
+                FileOutputStream(outFile).use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+                        if (totalBytes > 0L) {
+                            val pct = ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                            if (pct != lastReportedPct && (pct == 100 || pct - lastReportedPct >= 3)) {
+                                lastReportedPct = pct
+                                onProgress(pct)
+                            }
+                        } else if (lastReportedPct == -1) {
+                            lastReportedPct = 0
+                            onProgress(null)
+                        }
+                    }
+                }
+            }
+            if (outFile.exists() && outFile.length() > 0L) outFile else null
+        }
+    }.getOrNull()
+
     fun completeFlexibleUpdate() {
+        if (_autoOpenAfterUpdateEnabled.value) {
+            prefs.edit().putBoolean(KEY_PENDING_AUTO_RELAUNCH, true).apply()
+        }
         runCatching { appUpdateManager?.completeUpdate() }
         _updateState.value = null
         unregisterListenerIfNeeded()
@@ -374,7 +544,10 @@ class AppUpdateCoordinator(
     fun dismissUpdateForNow() {
         val current = _updateState.value ?: return
         if (current.isImmediateRequired) return
-        prefs.edit().putInt(KEY_DISMISSED_VERSION_CODE, current.availableVersionCode).apply()
+        prefs.edit()
+            .putInt(KEY_DISMISSED_VERSION_CODE, current.availableVersionCode)
+            .putString(KEY_DISMISSED_VERSION_NAME, current.availableVersionLabel)
+            .apply()
         _updateState.value = null
     }
 
@@ -386,30 +559,48 @@ class AppUpdateCoordinator(
     ): AppUpdateInfoState? {
         return runCatching {
             val root = JSONObject(manifestJson)
-            // Supports both standard {versionCode, versionName} JSON and GitHub Releases {tag_name, body, html_url}
-            val explicitCode = root.optInt("versionCode", 0)
+            val explicitCode = root.optInt("versionCode", 0).takeIf { it > 0 }
+                ?: root.optInt("buildNumber", 0)
             val tagName = root.optString("tag_name", "")
+                .ifBlank { root.optString("tag", "") }
+            val explicitName = root.optString("versionName", "")
+                .ifBlank { tagName.removePrefix("v").removePrefix("V") }
+                .trim()
+
             val remoteCode = if (explicitCode > 0) {
                 explicitCode
             } else {
-                parseVersionCodeFromTag(tagName)
+                parseVersionCodeFromTag(explicitName.ifBlank { tagName })
             }
-            if (remoteCode <= currentVersionCode) return null
+            val remoteLabel = explicitName.ifBlank { "Build $remoteCode" }
+
+            if (!shouldOfferUpdate(remoteCode, remoteLabel, currentVersionCode, currentVersionName)) {
+                return null
+            }
 
             val mandatory = root.optBoolean("mandatory", false)
             val dismissedCode = prefs.getInt(KEY_DISMISSED_VERSION_CODE, -1)
-            if (!forceShow && !mandatory && dismissedCode == remoteCode) return null
-
-            val label = root.optString("versionName", "")
-                .ifBlank { tagName.removePrefix("v").removePrefix("V") }
-                .ifBlank { "Build $remoteCode" }
+            val dismissedName = prefs.getString(KEY_DISMISSED_VERSION_NAME, "").orEmpty()
+            val alreadyDismissed = (remoteCode > 0 && dismissedCode == remoteCode) &&
+                (dismissedName.isBlank() || dismissedName == remoteLabel)
+            if (!forceShow && !mandatory && alreadyDismissed) return null
 
             val notes = root.optString("releaseNotes", "")
+                .ifBlank { root.optString("notes", "") }
                 .ifBlank { root.optString("body", "") }
                 .ifBlank { AppUpdateInfoState.DEFAULT_RELEASE_NOTES }
 
-            val url = root.optString("storeUrl", "")
+            val assetApkUrl = root.optJSONArray("assets")?.let { arr ->
+                (0 until arr.length())
+                    .mapNotNull { idx -> arr.optJSONObject(idx)?.optString("browser_download_url") }
+                    .firstOrNull { url -> url.endsWith(".apk", ignoreCase = true) }
+            }.orEmpty()
+
+            val url = root.optString("apkUrl", "")
+                .ifBlank { assetApkUrl }
                 .ifBlank { root.optString("downloadUrl", "") }
+                .ifBlank { root.optString("storeUrl", "") }
+                .ifBlank { root.optString("releaseUrl", "") }
                 .ifBlank { root.optString("html_url", "") }
                 .ifBlank { null }
 
@@ -417,7 +608,7 @@ class AppUpdateCoordinator(
                 currentVersionName = currentVersionName,
                 currentVersionCode = currentVersionCode,
                 availableVersionCode = remoteCode,
-                availableVersionLabel = label,
+                availableVersionLabel = remoteLabel,
                 releaseNotes = notes,
                 isImmediateRequired = mandatory,
                 storeUrl = url
@@ -466,7 +657,7 @@ class AppUpdateCoordinator(
         }
 
         val notification = NotificationCompat.Builder(appContext, UPDATE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_yvgpscam)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -530,17 +721,100 @@ class AppUpdateCoordinator(
     }
 
     companion object {
-        private const val PREFS_NAME = "yvgpscam_updates"
+        internal const val PREFS_NAME = "yvgpscam_updates"
         private const val KEY_DISMISSED_VERSION_CODE = "dismissed_version_code"
+        private const val KEY_DISMISSED_VERSION_NAME = "dismissed_version_name"
         private const val KEY_LAST_NOTIFIED_VERSION_CODE = "last_notified_version_code"
         private const val KEY_AUTO_PUSH_ENABLED = "auto_push_enabled"
+        internal const val KEY_AUTO_OPEN_AFTER_UPDATE = "auto_open_after_update"
+        internal const val KEY_PENDING_AUTO_RELAUNCH = "pending_auto_relaunch"
+        internal const val KEY_LAST_SEEN_VERSION_CODE = "last_seen_version_code"
+        internal const val KEY_LAST_SEEN_VERSION_NAME = "last_seen_version_name"
         private const val KEY_MANIFEST_FEED_URL = "manifest_feed_url"
         private const val MANDATORY_STALENESS_DAYS = 7
-        private const val AUTO_CHECK_THROTTLE_MS = 10 * 60 * 1000L
+        private const val AUTO_CHECK_THROTTLE_MS = 30_000L
         private const val JOB_ID_PERIODIC_UPDATE = 9402
         private const val UPDATE_NOTIFICATION_ID = 9403
-        private const val UPDATE_CHANNEL_ID = "yvgpscam_updates"
+        internal const val UPDATE_CHANNEL_ID = "yvgpscam_updates"
         const val EXTRA_OPEN_UPDATE_POPUP = "extra_open_update_popup"
+        const val EXTRA_POST_UPDATE_LAUNCH = "extra_post_update_launch"
+
+        fun resolveDeviceBuildModel(): String {
+            val manufacturer = Build.MANUFACTURER.orEmpty().trim()
+            val model = Build.MODEL.orEmpty().trim()
+            if (manufacturer.isBlank()) return model.ifBlank { "Android Device" }
+            if (model.isBlank()) return manufacturer
+            val formattedManuf = manufacturer.replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
+            }
+            return if (model.startsWith(formattedManuf, ignoreCase = true)) {
+                model
+            } else {
+                "$formattedManuf $model"
+            }
+        }
+
+        fun resolveInstalledBuildInfo(context: Context): InstalledBuildInfo {
+            val pkgInfo = runCatching {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }.getOrNull()
+
+            val liveCode = pkgInfo?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    it.longVersionCode.toInt()
+                } else {
+                    @Suppress("DEPRECATION")
+                    it.versionCode
+                }
+            }?.takeIf { it > 0 } ?: BuildConfig.VERSION_CODE
+
+            val liveName = pkgInfo?.versionName
+                ?.takeIf { it.isNotBlank() }
+                ?: BuildConfig.VERSION_NAME
+
+            return InstalledBuildInfo(
+                versionCode = liveCode,
+                versionName = liveName,
+                packageName = context.packageName,
+                deviceModel = resolveDeviceBuildModel(),
+                androidVersion = Build.VERSION.RELEASE.orEmpty().ifBlank { Build.VERSION.SDK_INT.toString() },
+                buildDisplay = Build.DISPLAY.orEmpty().ifBlank { "SDK ${Build.VERSION.SDK_INT}" }
+            )
+        }
+
+        internal fun shouldOfferUpdate(
+            remoteCode: Int,
+            remoteVersionName: String,
+            currentCode: Int,
+            currentVersionName: String
+        ): Boolean {
+            if (remoteCode > currentCode) return true
+            val cleanRemote = remoteVersionName.trim().removePrefix("v").removePrefix("V")
+            val cleanCurrent = currentVersionName.trim().removePrefix("v").removePrefix("V")
+            if (cleanRemote.isNotBlank() && cleanRemote != cleanCurrent && !cleanRemote.startsWith("Build ")) {
+                val cmp = compareSemVer(cleanRemote, cleanCurrent)
+                if (cmp > 0) return true
+                if (remoteCode == currentCode && cmp == 0) return true
+            }
+            return false
+        }
+
+        internal fun compareSemVer(left: String, right: String): Int {
+            val leftParts = left.trim().removePrefix("v").removePrefix("V")
+                .split(".", "-", "_")
+                .mapNotNull { it.filter(Char::isDigit).toIntOrNull() }
+            val rightParts = right.trim().removePrefix("v").removePrefix("V")
+                .split(".", "-", "_")
+                .mapNotNull { it.filter(Char::isDigit).toIntOrNull() }
+            val maxLen = maxOf(leftParts.size, rightParts.size)
+            for (i in 0 until maxLen) {
+                val l = leftParts.getOrElse(i) { 0 }
+                val r = rightParts.getOrElse(i) { 0 }
+                if (l != r) return l.compareTo(r)
+            }
+            return left.compareTo(right)
+        }
 
         internal fun parseVersionCodeFromTag(tag: String): Int {
             val digits = tag.trim().removePrefix("v").removePrefix("V")

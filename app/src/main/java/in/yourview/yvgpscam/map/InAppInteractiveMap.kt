@@ -559,7 +559,7 @@ fun InAppInteractiveTileMap(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(48.dp)
                         .clickable {
                             val nextZoom = (viewZoom + 1f).coerceIn(3f, 18f)
                             viewZoom = nextZoom
@@ -582,7 +582,7 @@ fun InAppInteractiveTileMap(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(48.dp)
                         .clickable {
                             val nextZoom = (viewZoom - 1f).coerceIn(3f, 18f)
                             viewZoom = nextZoom

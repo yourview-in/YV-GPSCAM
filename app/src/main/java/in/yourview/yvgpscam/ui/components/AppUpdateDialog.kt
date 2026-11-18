@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -121,10 +122,10 @@ fun AppUpdateDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "v${updateState.currentVersionName}",
+                                text = "v${updateState.currentVersionName} (B${updateState.currentVersionCode})",
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp
+                                fontSize = 11.5.sp
                             )
                         }
                     }
@@ -143,10 +144,14 @@ fun AppUpdateDialog(
                                 color = TelemetryEmerald
                             )
                             Text(
-                                text = updateState.availableVersionLabel,
+                                text = if (updateState.availableVersionCode > 0 && !updateState.availableVersionLabel.contains("Build")) {
+                                    "${updateState.availableVersionLabel} (B${updateState.availableVersionCode})"
+                                } else {
+                                    updateState.availableVersionLabel
+                                },
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 color = TelemetryEmerald
                             )
                         }
@@ -162,7 +167,7 @@ fun AppUpdateDialog(
                 ) {
                     Text(
                         text = if (updateState.isDownloaded) {
-                            "The latest version of YVGPSCAM has finished downloading. Tap Restart & Install to finish updating."
+                            "The latest version of YVGPSCAM has finished downloading. Tap Restart & Install to finish updating and reopen the app."
                         } else {
                             updateState.releaseNotes
                         },
@@ -181,7 +186,7 @@ fun AppUpdateDialog(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                text = "Downloading update... $pct%",
+                                text = updateState.statusDetail ?: "Downloading update... $pct%",
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontSize = 11.sp,
                                 color = ShutterGold
@@ -192,13 +197,20 @@ fun AppUpdateDialog(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                text = "Downloading update...",
+                                text = updateState.statusDetail ?: "Downloading update...",
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontSize = 11.sp,
                                 color = ShutterGold
                             )
                         }
                     }
+                } else if (!updateState.statusDetail.isNullOrBlank()) {
+                    Text(
+                        text = updateState.statusDetail,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp,
+                        color = TelemetryEmerald
+                    )
                 }
             }
         },
@@ -216,7 +228,7 @@ fun AppUpdateDialog(
                 ) {
                     Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Restart & Install", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.update_restart_install), fontWeight = FontWeight.Bold)
                 }
             } else {
                 Button(
@@ -232,7 +244,7 @@ fun AppUpdateDialog(
                 ) {
                     Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Update Now", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.update_now), fontWeight = FontWeight.Bold)
                 }
             }
         },
@@ -244,7 +256,7 @@ fun AppUpdateDialog(
                         .height(48.dp)
                         .testTag("update_popup_later_button")
                 ) {
-                    Text("Later")
+                    Text(stringResource(R.string.update_later))
                 }
             }
         }

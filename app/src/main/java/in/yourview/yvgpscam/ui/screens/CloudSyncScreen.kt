@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,6 +83,7 @@ import `in`.yourview.yvgpscam.data.cloud.GoogleDriveAutoSyncCoordinator
 import `in`.yourview.yvgpscam.data.cloud.GoogleDriveBackupRepository
 import `in`.yourview.yvgpscam.data.local.PhotoRepository
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
+import `in`.yourview.yvgpscam.ui.components.findActivity
 import `in`.yourview.yvgpscam.ui.theme.AlertCoral
 import `in`.yourview.yvgpscam.ui.theme.JetBrainsMonoFontFamily
 import `in`.yourview.yvgpscam.ui.theme.ObsidianBg
@@ -142,7 +144,7 @@ private fun GoogleDriveSignInGate(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
 
@@ -188,7 +190,7 @@ private fun GoogleDriveSignInGate(
                 )
 
                 Text(
-                    text = "Google Drive Auto Backup",
+                    text = stringResource(R.string.cloud_title),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -276,7 +278,7 @@ private fun GoogleDriveSignInGate(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Sign in with Google", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.cloud_sign_in_google), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -293,7 +295,7 @@ private fun GoogleDriveBackupDashboard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
 

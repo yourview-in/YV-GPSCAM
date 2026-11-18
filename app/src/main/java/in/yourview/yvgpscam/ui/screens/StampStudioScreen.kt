@@ -956,7 +956,7 @@ private fun AdvanceFieldRow(
         if (hasSettingsArrow && onExpandToggle != null) {
             IconButton(
                 onClick = onExpandToggle,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = if (expanded) Icons.Default.ExpandLess else Icons.AutoMirrored.Filled.KeyboardArrowRight,

@@ -565,7 +565,7 @@ private fun FileNameCheckRow(
             IconButton(
                 onClick = onMoveUp,
                 enabled = enabled && canMoveUp,
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowUpward,
@@ -577,7 +577,7 @@ private fun FileNameCheckRow(
             IconButton(
                 onClick = onMoveDown,
                 enabled = enabled && canMoveDown,
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowDownward,

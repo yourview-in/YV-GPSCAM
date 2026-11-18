@@ -86,6 +86,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -94,6 +95,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import `in`.yourview.yvgpscam.R
 import `in`.yourview.yvgpscam.camera.ExifMetadataDetails
 import `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
@@ -710,7 +712,7 @@ fun PhotoDetailScreen(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = if (showDetails) "Hide Details" else "Details",
+                    text = if (showDetails) "Hide Details" else stringResource(R.string.action_details),
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.width(4.dp))
@@ -771,7 +773,7 @@ fun PhotoDetailScreen(
 
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "GPS Location Telemetry",
+                                text = stringResource(R.string.detail_gps_telemetry),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )

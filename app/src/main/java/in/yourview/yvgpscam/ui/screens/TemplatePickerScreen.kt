@@ -226,13 +226,11 @@ fun TemplatePickerScreen(
 
                         // Golden Edit Pencil FAB on Advance Template (IMG_4857) & Badge edit on Reporting
                         if (layout == StampLayoutTemplate.ADVANCE) {
-                            Surface(
-                                color = ShutterGold,
-                                shape = CircleShape,
-                                shadowElevation = 4.dp,
+                            Box(
+                                contentAlignment = Alignment.Center,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(40.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
                                     .clickable {
                                         viewModel.selectLayoutTemplate(layout)
@@ -240,23 +238,28 @@ fun TemplatePickerScreen(
                                     }
                                     .testTag("edit_advance_template_button")
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Customize Advance Template",
-                                        tint = Color(0xFF141619),
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Surface(
+                                    color = ShutterGold,
+                                    shape = CircleShape,
+                                    shadowElevation = 4.dp,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Customize Advance Template",
+                                            tint = Color(0xFF141619),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                         } else if (layout == StampLayoutTemplate.REPORTING) {
-                            Surface(
-                                color = ShutterGold,
-                                shape = CircleShape,
-                                shadowElevation = 4.dp,
+                            Box(
+                                contentAlignment = Alignment.Center,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(38.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
                                     .clickable {
                                         viewModel.selectLayoutTemplate(layout)
@@ -264,13 +267,20 @@ fun TemplatePickerScreen(
                                     }
                                     .testTag("edit_reporting_badge_button")
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Reporting Status Badge",
-                                        tint = Color(0xFF141619),
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                Surface(
+                                    color = ShutterGold,
+                                    shape = CircleShape,
+                                    shadowElevation = 4.dp,
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit Reporting Status Badge",
+                                            tint = Color(0xFF141619),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

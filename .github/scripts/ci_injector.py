@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import json
 
 
 def fix_packages_and_imports():
@@ -82,25 +83,56 @@ def fix_packages_and_imports():
 
 
 def inject_keys_and_google_maps():
-    maps_key = (os.environ.get("MAPS_API_KEY") or "placeholder").strip()
-    drive_key = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "placeholder").strip()
-    gemini_key = (os.environ.get("GEMINI_API_KEY") or "placeholder").strip()
-    client_id = (os.environ.get("WEB_CLIENT_ID") or "://googleusercontent.com").strip()
+    maps_key = (os.environ.get("MAPS_API_KEY") or "").strip()
+    drive_key = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "").strip()
+    gemini_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    client_id = (os.environ.get("WEB_CLIENT_ID") or "").strip()
+    cert_sha1 = (os.environ.get("CERT_SHA1") or "").strip().lower()
 
-    if maps_key and maps_key != "placeholder":
-        print(f"MAPS_API_KEY loaded (length: {len(maps_key)}). Configuring official Google Maps!")
+    if maps_key and maps_key != "placeholder" and not maps_key.startswith("MY_"):
+        print(f"MAPS_API_KEY loaded (length: {len(maps_key)}). Configuring Google Maps!")
     else:
-        print("WARNING: MAPS_API_KEY is empty!")
+        maps_key = ""
+        print("INFO: MAPS_API_KEY secret not set; interactive in-app tile maps remain active.")
 
-    if client_id == "://googleusercontent.com" or not client_id:
-        print("WARNING: WEB_CLIENT_ID secret is empty!")
-    else:
+    valid_client_id = client_id.endswith(".apps.googleusercontent.com") and not client_id.startswith("://")
+    if valid_client_id:
         print(f"WEB_CLIENT_ID loaded (length: {len(client_id)}).")
+    else:
+        print("INFO: WEB_CLIENT_ID secret not set; preserving checked-in app/google-services.json.")
+
+    # Non-destructively update app/google-services.json when WEB_CLIENT_ID or CERT_SHA1 is provided
+    gs_path = "app/google-services.json"
+    if os.path.exists(gs_path) and (valid_client_id or cert_sha1 or (drive_key and drive_key != "placeholder")):
+        try:
+            gs = json.loads(open(gs_path, encoding="utf-8").read())
+            for c in gs.get("client", []):
+                c.setdefault("client_info", {}).setdefault("android_client_info", {})["package_name"] = "in.yourview.yvgpscam"
+                oauth_list = c.setdefault("oauth_client", [])
+                if valid_client_id:
+                    updated_web = False
+                    for o in oauth_list:
+                        if o.get("client_type") == 3:
+                            o["client_id"] = client_id
+                            updated_web = True
+                    if not updated_web:
+                        oauth_list.append({"client_id": client_id, "client_type": 3})
+                if cert_sha1:
+                    for o in oauth_list:
+                        if o.get("client_type") == 1:
+                            o.setdefault("android_info", {})["package_name"] = "in.yourview.yvgpscam"
+                            o["android_info"]["certificate_hash"] = cert_sha1
+                if drive_key and drive_key != "placeholder":
+                    c["api_key"] = [{"current_key": drive_key}]
+            open(gs_path, "w", encoding="utf-8").write(json.dumps(gs, indent=2) + "\n")
+            print("Updated app/google-services.json non-destructively (preserving client_type 1 & 3).")
+        except Exception as exc:
+            print(f"WARNING: Could not patch app/google-services.json cleanly: {exc}")
 
     for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
         if os.path.exists(gradle_file):
             g_txt = open(gradle_file, encoding="utf-8").read()
-            if maps_key and maps_key != "placeholder":
+            if maps_key:
                 g_txt = g_txt.replace("MY_MAPS_API_KEY", maps_key)
                 g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))',
@@ -126,7 +158,7 @@ def inject_keys_and_google_maps():
                     rf'\g<1>"\\"{gemini_key}\\""\g<2>',
                     g_txt
                 )
-            if "googleusercontent.com" in client_id and not client_id.startswith("://"):
+            if valid_client_id:
                 g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
                 g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))',
@@ -143,7 +175,7 @@ def inject_keys_and_google_maps():
 
             open(gradle_file, "w", encoding="utf-8").write(g_txt)
 
-    if maps_key and maps_key != "placeholder":
+    if maps_key:
         manifest_path = "app/src/main/AndroidManifest.xml"
         if os.path.exists(manifest_path):
             m_txt = open(manifest_path, encoding="utf-8").read()
@@ -162,167 +194,55 @@ def inject_keys_and_google_maps():
                 open(fp, "w", encoding="utf-8").write(k_txt)
 
     repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
-    if os.path.exists(repo_path) and maps_key and maps_key != "placeholder":
+    if os.path.exists(repo_path) and maps_key:
         r_txt = open(repo_path, encoding="utf-8").read()
 
-        old_root_decl = """private val tilesRootDir: File by lazy {
-        File(context.filesDir, "offline_tiles").apply { mkdirs() }
-    }"""
-        new_root_decl = """private val tilesRootDir: File by lazy {
-        val dir = File(context.filesDir, "offline_tiles").apply { mkdirs() }
-        val marker = File(dir, ".google_maps_migrated_v1")
-        if (!marker.exists()) {
-            dir.listFiles()?.forEach { it.deleteRecursively() }
-            dir.mkdirs()
-            runCatching { marker.createNewFile() }
-        }
-        dir
-    }"""
-        if old_root_decl in r_txt:
-            r_txt = r_txt.replace(old_root_decl, new_root_decl, 1)
-
-        old_tile_fn = re.compile(
-            r'fun\s+fetchTileFromNetworkAndCache\s*\([^)]*\)\s*:\s*ByteArray\?\s*\{.*?(?=\n\s*private\s+fun\s+executeTileRequest)',
-            re.DOTALL
-        )
-        new_tile_fn = f"""fun fetchTileFromNetworkAndCache(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): ByteArray? {{
-        val n = 2.0.pow(z.toDouble())
-        val tileLon = ((x + 0.5) / n) * 360.0 - 180.0
-        val latRad = atan(sinh(PI * (1.0 - 2.0 * (y + 0.5) / n)))
-        val tileLat = Math.toDegrees(latRad)
-        val googleMapType = when (mapStyle) {{
-            MapStyle.STANDARD -> "roadmap"
-            MapStyle.SATELLITE -> "satellite"
-            MapStyle.TERRAIN -> "terrain"
-            MapStyle.HYBRID -> "hybrid"
-        }}
-        val url = String.format(
-            Locale.US,
-            "https://maps.googleapis.com/maps/api/staticmap?center=%.6f,%.6f&zoom=%d&size=256x256&scale=2&maptype=%s&key=%s",
-            tileLat,
-            tileLon,
-            z.coerceIn(1, 20),
-            googleMapType,
-            "{maps_key}"
-        )
-        val bytes = executeTileRequest(url)
-        if (bytes != null && isValidImageBytes(bytes)) {{
-            saveTileBytes(z, x, y, bytes, mapStyle)
-            return bytes
-        }}
-        return null
-    }}
-
-    """
-        if old_tile_fn.search(r_txt):
-            r_txt = old_tile_fn.sub(new_tile_fn, r_txt, count=1)
-            print("Routed fetchTileFromNetworkAndCache to official Google Maps!")
-
-        if "X-Android-Package" not in r_txt and '.header("User-Agent"' in r_txt:
-            helper_snippet = """val androidCertSha1 = runCatching {
-            val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
-                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners?.firstOrNull()
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
-            }
-            if (sig != null) {
-                java.security.MessageDigest.getInstance("SHA-1").digest(sig.toByteArray()).joinToString("") { "%02X".format(it) }
-            } else ""
-        }.getOrDefault("")
-        val reqBuilder = Request.Builder()
-            .url(url)
-            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
-        if (url.contains("googleapis.com")) {
-            reqBuilder.header("X-Android-Package", context.packageName)
-            if (androidCertSha1.isNotEmpty()) {
-                reqBuilder.header("X-Android-Cert", androidCertSha1)
-            }
-        }
-        val request = reqBuilder.build()"""
-            old_req = """val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
-            .build()"""
-            if old_req in r_txt:
-                r_txt = r_txt.replace(old_req, helper_snippet, 1)
+        if "X-Android-Package" not in r_txt:
+            req_pattern = re.compile(
+                r'(\s*)val request = Request\.Builder\(\)\s*\.url\(url\)\s*\.header\("User-Agent",\s*"YVGPSCAM-Android/1\.0 \(Geotag Camera; Android\)"\)\s*\.build\(\)'
+            )
+            if req_pattern.search(r_txt):
+                def _repl(m):
+                    ind = m.group(1)
+                    return (
+                        f"{ind}val reqBuilder = Request.Builder()\n"
+                        f"{ind}    .url(url)\n"
+                        f"{ind}    .header(\"User-Agent\", \"YVGPSCAM-Android/1.0 (Geotag Camera; Android)\")\n"
+                        f"{ind}if (url.contains(\"googleapis.com\")) {{\n"
+                        f"{ind}    reqBuilder.header(\"X-Android-Package\", context.packageName)\n"
+                        f"{ind}    if (androidCertSha1.isNotEmpty()) reqBuilder.header(\"X-Android-Cert\", androidCertSha1)\n"
+                        f"{ind}}}\n"
+                        f"{ind}val request = reqBuilder.build()"
+                    )
+                r_txt = req_pattern.sub(_repl, r_txt, count=1)
                 print("Attached X-Android-Package & X-Android-Cert headers for Google Maps!")
 
         open(repo_path, "w", encoding="utf-8").write(r_txt)
 
     auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
-    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
+    if os.path.exists(auth_helper_path) and valid_client_id:
         a_txt = open(auth_helper_path, encoding="utf-8").read()
         a_txt = a_txt.replace(
-            'val clientId = runCatching { context.getString(R.string.default_web_client_id) }.getOrNull()\n            ?: return null',
-            f'val clientId = runCatching {{ context.getString(R.string.default_web_client_id) }}.getOrNull()?.takeIf {{ it.endsWith(".apps.googleusercontent.com") }} ?: "{client_id}"'
-        )
-        a_txt = a_txt.replace(
-            'val clientId = runCatching { activity.getString(R.string.default_web_client_id) }.getOrNull()\n            ?: return Result.failure(IllegalStateException("Google Sign-In configuration missing (default_web_client_id)."))',
-            f'val clientId = runCatching {{ activity.getString(R.string.default_web_client_id) }}.getOrNull()?.takeIf {{ it.endsWith(".apps.googleusercontent.com") }} ?: "{client_id}"'
+            'runCatching { context.getString(R.string.default_web_client_id) }\n            .getOrNull()\n            ?.trim()\n            ?.takeIf { it.endsWith(".apps.googleusercontent.com") && !it.startsWith("://") }',
+            f'runCatching {{ context.getString(R.string.default_web_client_id) }}.getOrNull()?.trim()?.takeIf {{ it.endsWith(".apps.googleusercontent.com") && !it.startsWith("://") }} ?: "{client_id}"'
         )
         open(auth_helper_path, "w", encoding="utf-8").write(a_txt)
 
 
 def inject_auto_updater():
-    repo = os.environ.get("REPO", "")
+    repo = (os.environ.get("REPO") or "").strip()
     if not repo:
         return
-    m_path = "app/src/main/AndroidManifest.xml"
-    if os.path.exists(m_path):
-        txt = open(m_path, encoding="utf-8").read()
-        if "android.permission.INTERNET" not in txt:
-            open(m_path, "w", encoding="utf-8").write(
-                txt.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1)
-            )
-    files = glob.glob("app/src/main/**/MainActivity.kt", recursive=True) + glob.glob("app/src/main/**/MainActivity.java", recursive=True)
-    if not files:
-        return
-    tf = files.pop(0)
-    src = open(tf, encoding="utf-8").read()
-    pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
-    pkg_line = pm.group(1).strip() if pm else "package `in`.yourview.yvgpscam"
-    code = f"""{pkg_line}
-import android.app.AlertDialog
-import android.content.*
-import android.net.Uri
-import android.os.*
-import org.json.JSONObject
-import java.net.*
-import kotlin.concurrent.thread
-
-object AutoAppUpdater {{
-    private const val URL_STR = "https://github.com/{repo}/releases/latest/download/update-manifest.json"
-    private var done = false
-    @JvmStatic fun checkForUpdate(ctx: Context) {{
-        if (done) return; done = true
-        thread {{
-            try {{
-                val c = (URL(URL_STR).openConnection() as HttpURLConnection).apply {{ connectTimeout = 5000; readTimeout = 5000 }}
-                val j = JSONObject(c.inputStream.bufferedReader().readText())
-                val lc = j.getInt("versionCode"); val ln = j.getString("versionName")
-                val notes = j.optString("notes", "New update available."); val apk = j.getString("apkUrl")
-                val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-                val cc = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else @Suppress("DEPRECATION") pi.versionCode
-                if (lc > cc) Handler(Looper.getMainLooper()).post {{
-                    try {{
-                        AlertDialog.Builder(ctx).setTitle("Update Available (v$ln)")
-                            .setMessage("What's New:\\n$notes\\n\\nTap Update Now to install.")
-                            .setPositiveButton("Update Now") {{ _, _ -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk))) }}
-                            .setNegativeButton("Later", null).show()
-                    }} catch (_: Exception) {{}}
-                }}
-            }} catch (_: Exception) {{}}
-        }}
-    }}
-}}
-"""
-    open(os.path.join(os.path.dirname(tf), "AutoAppUpdater.kt"), "w", encoding="utf-8").write(code)
-    if "AutoAppUpdater.checkForUpdate" not in src:
-        rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
-        s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
-        if n > 0:
-            open(tf, "w", encoding="utf-8").write(s2)
+    feed_url = f"https://github.com/{repo}/releases/latest/download/update-manifest.json"
+    gp_path = "gradle.properties"
+    if os.path.exists(gp_path):
+        lines = [
+            l for l in open(gp_path, encoding="utf-8").read().splitlines()
+            if not l.startswith("UPDATE_MANIFEST_URL=")
+        ]
+        lines.append(f"UPDATE_MANIFEST_URL={feed_url}")
+        open(gp_path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+        print(f"Configured default in-app update manifest feed: {feed_url}")
 
 
 if __name__ == "__main__":

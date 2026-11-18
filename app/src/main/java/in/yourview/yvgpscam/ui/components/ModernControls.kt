@@ -124,7 +124,13 @@ fun ModernGlassCircleButton(
     Box(
         modifier = rootMod
             .size(48.dp)
-            .scale(pressScale),
+            .scale(pressScale)
+            .clip(CircleShape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -138,11 +144,6 @@ fun ModernGlassCircleButton(
                     } else {
                         Modifier
                     }
-                )
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null,
-                    onClick = onClick
                 ),
             contentAlignment = Alignment.Center
         ) {

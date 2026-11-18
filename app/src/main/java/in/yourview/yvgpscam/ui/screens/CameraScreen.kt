@@ -2,13 +2,10 @@ package `in`.yourview.yvgpscam.ui.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.OrientationEventListener
@@ -26,9 +23,11 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
-import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
@@ -61,9 +60,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -191,6 +193,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -354,6 +357,8 @@ fun CameraScreen(
     var focusReticle by remember { mutableStateOf<FocusReticleState?>(null) }
     var focusSequence by remember { mutableIntStateOf(0) }
     var activeRecording by remember { mutableStateOf<Recording?>(null) }
+    var activeRawVideoFile by remember { mutableStateOf<File?>(null) }
+    var activeVideoFrontCamera by remember { mutableStateOf(false) }
     var isVideoPaused by remember { mutableStateOf(false) }
     var isTorchEnabled by remember { mutableStateOf(false) }
     var isBurstMode by remember { mutableStateOf(false) }
@@ -403,9 +408,20 @@ fun CameraScreen(
         }
     }
 
-    val imageCapture = remember {
+    val resolutionSelector = remember(hudState.aspectRatio) {
+        val strategy = when (hudState.aspectRatio) {
+            CameraAspectRatio.RATIO_16_9 -> AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+            CameraAspectRatio.RATIO_4_3, CameraAspectRatio.RATIO_1_1 -> AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+        }
+        ResolutionSelector.Builder()
+            .setAspectRatioStrategy(strategy)
+            .build()
+    }
+
+    val imageCapture = remember(hudState.aspectRatio, resolutionSelector) {
         ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setResolutionSelector(resolutionSelector)
             .build()
     }
 
@@ -506,11 +522,11 @@ fun CameraScreen(
         effectiveStampOrientationAngle.roundToInt()
     }
 
-    LaunchedEffect(hudState.flashMode) {
+    LaunchedEffect(hudState.flashMode, imageCapture) {
         imageCapture.flashMode = hudState.flashMode
     }
 
-    LaunchedEffect(deviceOrientation) {
+    LaunchedEffect(deviceOrientation, imageCapture) {
         imageCapture.targetRotation = deviceOrientation.surfaceRotation
         videoCapture.targetRotation = deviceOrientation.surfaceRotation
     }
@@ -627,17 +643,9 @@ fun CameraScreen(
         }
 
         val fileTimestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, "YVGPSCAM_$fileTimestamp.mp4")
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/YVGPSCAM")
-            }
-        }
-        val outputOptions = MediaStoreOutputOptions.Builder(
-            context.contentResolver,
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        ).setContentValues(contentValues).build()
+        val tempVideoFile = File(context.cacheDir, "raw_vid_$fileTimestamp.mp4")
+        if (tempVideoFile.exists()) tempVideoFile.delete()
+        val outputOptions = FileOutputOptions.Builder(tempVideoFile).build()
 
         val pending = videoCapture.output.prepareRecording(context, outputOptions).apply {
             if (stampConfig.recordVideoWithVoice && hasAudioPermission) {
@@ -645,16 +653,23 @@ fun CameraScreen(
             }
         }
 
+        val isFront = hudState.lensFacing == CameraSelector.LENS_FACING_FRONT
+        activeRawVideoFile = tempVideoFile
+        activeVideoFrontCamera = isFront
         isVideoPaused = false
         viewModel.setRecordingState(isRecording = true, elapsedSeconds = 0)
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         activeRecording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
             if (event is VideoRecordEvent.Finalize) {
+                val finishedFile = activeRawVideoFile ?: tempVideoFile
+                val usedFront = activeVideoFrontCamera
                 activeRecording = null
+                activeRawVideoFile = null
                 isVideoPaused = false
-                if (!event.hasError()) {
-                    viewModel.saveRecordedVideo(event.outputResults.outputUri)
+                if (!event.hasError() && finishedFile.exists()) {
+                    viewModel.saveRecordedVideo(finishedFile, isFrontCamera = usedFront)
                 } else {
+                    runCatching { finishedFile.delete() }
                     viewModel.setRecordingState(isRecording = false, elapsedSeconds = 0)
                     viewModel.setStatusMessage("Video recording stopped (${event.error})")
                 }
@@ -706,6 +721,13 @@ fun CameraScreen(
         }
     }
 
+    val isAutoMode = hudState.captureMode == CameraCaptureMode.AUTO_CAPTURE
+    val exposureState = activeCamera?.cameraInfo?.exposureState
+    val evRange = exposureState?.exposureCompensationRange
+    val minEvIdx = evRange?.lower ?: 0
+    val maxEvIdx = evRange?.upper ?: 0
+    val evStep = exposureState?.exposureCompensationStep?.toFloat() ?: 0.33f
+
     // Modernised Floating Glass Top Toolbar
     val topIconToolbar: @Composable () -> Unit = {
         val flashIcon = when (hudState.flashMode) {
@@ -713,7 +735,6 @@ fun CameraScreen(
             ImageCapture.FLASH_MODE_AUTO -> Icons.Rounded.FlashAuto
             else -> Icons.Rounded.FlashOff
         }
-        val isAutoMode = hudState.captureMode == CameraCaptureMode.AUTO_CAPTURE
         val activeToolsCount = remember(
             hudState.showGrid,
             stampConfig.timerDelaySeconds,
@@ -733,11 +754,6 @@ fun CameraScreen(
                 exposureIndex != 0
             ).count { it }
         }
-        val exposureState = activeCamera?.cameraInfo?.exposureState
-        val evRange = exposureState?.exposureCompensationRange
-        val minEvIdx = evRange?.lower ?: 0
-        val maxEvIdx = evRange?.upper ?: 0
-        val evStep = exposureState?.exposureCompensationStep?.toFloat() ?: 0.33f
 
         Column(
             modifier = Modifier
@@ -857,78 +873,106 @@ fun CameraScreen(
                     testTag = "camera_settings_button"
                 )
             }
+        }
+    }
 
-            AnimatedVisibility(
-                visible = hudState.showToolsDrawer,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
+    val floatingToolsOverlay: @Composable () -> Unit = {
+        AnimatedVisibility(
+            visible = hudState.showToolsDrawer,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(top = 60.dp)
             ) {
-                CameraQuickToolsDrawer(
-                    hudState = hudState,
-                    config = stampConfig,
-                    isTorchEnabled = isTorchEnabled,
-                    isBurstMode = isBurstMode,
-                    isAutoCaptureMode = isAutoMode,
-                    exposureIndex = exposureIndex,
-                    minExposureIndex = minEvIdx,
-                    maxExposureIndex = maxEvIdx,
-                    exposureStepEv = evStep,
-                    onCycleRatio = { viewModel.cycleAspectRatio() },
-                    onToggleGrid = { viewModel.toggleGrid() },
-                    onCycleTimer = { viewModel.cycleTimerDelay() },
-                    onToggleFullView = {
-                        viewModel.toggleFullScreenCamera()
-                        viewModel.closeToolsDrawer()
-                    },
-                    onToggleTorch = {
-                        if (hudState.lensFacing == CameraSelector.LENS_FACING_FRONT) {
-                            viewModel.setStatusMessage("Torch is only available on the rear camera")
-                        } else {
-                            isTorchEnabled = !isTorchEnabled
-                        }
-                    },
-                    onToggleMirror = {
-                        viewModel.updateStampConfig { it.copy(mirrorFrontCamera = !it.mirrorFrontCamera) }
-                    },
-                    onToggleVoice = {
-                        val nextVoice = !stampConfig.recordVideoWithVoice
-                        viewModel.updateStampConfig { it.copy(recordVideoWithVoice = nextVoice) }
-                        if (nextVoice && !hasAudioPermission) {
-                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    onToggleLevel = {
-                        viewModel.updateStampConfig { it.copy(showDigitalLevel = !it.showDigitalLevel) }
-                    },
-                    onToggleAutoCapture = {
-                        viewModel.toggleAutoCaptureMode()
-                        viewModel.closeToolsDrawer()
-                    },
-                    onToggleBurstMode = {
-                        isBurstMode = !isBurstMode
-                        viewModel.setStatusMessage(if (isBurstMode) "3-Shot Burst Enabled" else "Single Capture Mode")
-                    },
-                    onCycleMapStyle = { viewModel.cycleMapStyle() },
-                    onToggleOfflineMapMode = {
-                        viewModel.updateStampConfig { it.copy(offlineOnlyMapMode = !it.offlineOnlyMapMode) }
-                    },
-                    onChangeExposureIndex = { idx -> exposureIndex = idx },
-                    onCycleStampPosition = { viewModel.cycleStampPosition() },
-                    onOpenNoteDialog = {
-                        viewModel.closeToolsDrawer()
-                        showNoteDialog = true
-                    },
-                    onImportPhoto = {
-                        viewModel.closeToolsDrawer()
-                        photoImportLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    onOpenDriveSync = {
-                        viewModel.closeToolsDrawer()
-                        onOpenCloudSync()
-                    }
+                val maxDrawerHeight = (maxHeight * 0.78f).coerceAtLeast(240.dp)
+                val scrimInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.28f))
+                        .clickable(
+                            interactionSource = scrimInteraction,
+                            indication = null
+                        ) { viewModel.closeToolsDrawer() }
                 )
+                AnimatedVisibility(
+                    visible = hudState.showToolsDrawer,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
+                    CameraQuickToolsDrawer(
+                        hudState = hudState,
+                        config = stampConfig,
+                        isTorchEnabled = isTorchEnabled,
+                        isBurstMode = isBurstMode,
+                        isAutoCaptureMode = isAutoMode,
+                        exposureIndex = exposureIndex,
+                        minExposureIndex = minEvIdx,
+                        maxExposureIndex = maxEvIdx,
+                        exposureStepEv = evStep,
+                        onCycleRatio = { viewModel.cycleAspectRatio() },
+                        onToggleGrid = { viewModel.toggleGrid() },
+                        onCycleTimer = { viewModel.cycleTimerDelay() },
+                        onToggleFullView = {
+                            viewModel.toggleFullScreenCamera()
+                            viewModel.closeToolsDrawer()
+                        },
+                        onToggleTorch = {
+                            if (hudState.lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                                viewModel.setStatusMessage("Torch is only available on the rear camera")
+                            } else {
+                                isTorchEnabled = !isTorchEnabled
+                            }
+                        },
+                        onToggleMirror = {
+                            viewModel.updateStampConfig { it.copy(mirrorFrontCamera = !it.mirrorFrontCamera) }
+                        },
+                        onToggleVoice = {
+                            val nextVoice = !stampConfig.recordVideoWithVoice
+                            viewModel.updateStampConfig { it.copy(recordVideoWithVoice = nextVoice) }
+                            if (nextVoice && !hasAudioPermission) {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        onToggleLevel = {
+                            viewModel.updateStampConfig { it.copy(showDigitalLevel = !it.showDigitalLevel) }
+                        },
+                        onToggleAutoCapture = {
+                            viewModel.toggleAutoCaptureMode()
+                            viewModel.closeToolsDrawer()
+                        },
+                        onToggleBurstMode = {
+                            isBurstMode = !isBurstMode
+                            viewModel.setStatusMessage(if (isBurstMode) "3-Shot Burst Enabled" else "Single Capture Mode")
+                        },
+                        onCycleMapStyle = { viewModel.cycleMapStyle() },
+                        onToggleOfflineMapMode = {
+                            viewModel.updateStampConfig { it.copy(offlineOnlyMapMode = !it.offlineOnlyMapMode) }
+                        },
+                        onChangeExposureIndex = { idx -> exposureIndex = idx },
+                        onCycleStampPosition = { viewModel.cycleStampPosition() },
+                        onOpenNoteDialog = {
+                            viewModel.closeToolsDrawer()
+                            showNoteDialog = true
+                        },
+                        onImportPhoto = {
+                            viewModel.closeToolsDrawer()
+                            photoImportLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onOpenDriveSync = {
+                            viewModel.closeToolsDrawer()
+                            onOpenCloudSync()
+                        },
+                        modifier = Modifier.heightIn(max = maxDrawerHeight)
+                    )
+                }
             }
         }
     }
@@ -946,15 +990,20 @@ fun CameraScreen(
                 hudState.lensFacing,
                 hudState.captureMode,
                 stampConfig.qrDetectionEnabled,
-                videoCapture
+                videoCapture,
+                imageCapture,
+                resolutionSelector
             ) {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                 cameraProviderFuture.addListener({
                     runCatching {
                         val provider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
+                        val preview = Preview.Builder()
+                            .setResolutionSelector(resolutionSelector)
+                            .build()
+                            .also {
+                                it.surfaceProvider = previewView.surfaceProvider
+                            }
                         val selector = CameraSelector.Builder()
                             .requireLensFacing(hudState.lensFacing)
                             .build()
@@ -1364,10 +1413,10 @@ fun CameraScreen(
                         )
                         listOf(3, 5, 10).forEach { sec ->
                             val selected = hudState.autoCaptureIntervalSeconds == sec
-                            Surface(
-                                color = if (selected) TelemetryEmerald else Color.Transparent,
-                                shape = CircleShape,
+                            Box(
+                                contentAlignment = Alignment.Center,
                                 modifier = Modifier
+                                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                                     .clip(CircleShape)
                                     .clickable {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1375,14 +1424,19 @@ fun CameraScreen(
                                     }
                                     .testTag("auto_interval_${sec}s")
                             ) {
-                                Text(
-                                    text = "${sec}s",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = if (selected) Color(0xFF0A1410) else Color.White,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                )
+                                Surface(
+                                    color = if (selected) TelemetryEmerald else Color.Transparent,
+                                    shape = CircleShape
+                                ) {
+                                    Text(
+                                        text = "${sec}s",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (selected) Color(0xFF0A1410) else Color.White,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1516,10 +1570,10 @@ fun CameraScreen(
                         CameraCaptureMode.VIDEO -> Icons.Rounded.Videocam
                         CameraCaptureMode.REPORTS -> Icons.Rounded.Description
                     }
-                    Surface(
-                        color = pillBg,
-                        shape = CircleShape,
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
                             .clip(CircleShape)
                             .clickable {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1531,25 +1585,30 @@ fun CameraScreen(
                             }
                             .testTag("camera_mode_${mode.name.lowercase()}")
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                        Surface(
+                            color = pillBg,
+                            shape = CircleShape
                         ) {
-                            Icon(
-                                imageVector = modeIcon,
-                                contentDescription = null,
-                                tint = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.78f),
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                text = mode.label,
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                color = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.85f),
-                                letterSpacing = 0.3.sp,
-                                maxLines = 1
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = modeIcon,
+                                    contentDescription = null,
+                                    tint = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.78f),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = mode.label,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    color = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.85f),
+                                    letterSpacing = 0.3.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -1617,7 +1676,7 @@ fun CameraScreen(
                         }
                     }
                     Text(
-                        text = "Collection",
+                        text = stringResource(R.string.camera_collection),
                         color = Color.White.copy(alpha = 0.90f),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
@@ -1629,7 +1688,7 @@ fun CameraScreen(
                 // 2. Locations (circular glass pod, highlights emerald when pinned)
                 ModernDeckPodButton(
                     icon = Icons.Rounded.LocationOn,
-                    label = "Locations",
+                    label = stringResource(R.string.camera_locations),
                     active = stampConfig.useManualLocation,
                     activeColor = TelemetryEmerald,
                     onClick = {
@@ -1785,7 +1844,7 @@ fun CameraScreen(
                 // 4. File Name (circular glass pod)
                 ModernDeckPodButton(
                     icon = Icons.Rounded.DriveFileRenameOutline,
-                    label = "File Name",
+                    label = stringResource(R.string.camera_file_name),
                     active = stampConfig.customFileNameEnabled,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1797,7 +1856,7 @@ fun CameraScreen(
                 // 5. Template (tap to open picker, long-press to quick-cycle layout)
                 ModernDeckPodButton(
                     icon = Icons.Rounded.AutoAwesomeMosaic,
-                    label = "Template",
+                    label = stringResource(R.string.camera_template),
                     active = false,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1868,18 +1927,21 @@ fun CameraScreen(
                             }
                         )
                     } else {
-                        val previewFrameModifier = when (hudState.aspectRatio) {
-                            CameraAspectRatio.RATIO_1_1 -> Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                            CameraAspectRatio.RATIO_16_9 -> Modifier
-                                .fillMaxSize()
-                            CameraAspectRatio.RATIO_4_3 -> Modifier.fillMaxSize()
-                        }
-                        Box(
+                        BoxWithConstraints(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
+                            val containerRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else 0.75f
+                            val targetRatio = hudState.aspectRatio.ratioValue
+                            val previewFrameModifier = if (containerRatio > targetRatio) {
+                                Modifier
+                                    .fillMaxHeight()
+                                    .aspectRatio(targetRatio, matchHeightConstraintsFirst = true)
+                            } else {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(targetRatio, matchHeightConstraintsFirst = false)
+                            }
                             Box(modifier = previewFrameModifier) {
                                 livePreviewContent(Modifier.fillMaxSize())
                             }
@@ -1891,6 +1953,8 @@ fun CameraScreen(
                 bottomCameraDeck()
             }
         }
+
+        floatingToolsOverlay()
     }
 
     // Quick Note & Brand Label Dialog
@@ -1967,17 +2031,24 @@ private fun ZoomSelectorPill(
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(28.dp)
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                     .clip(CircleShape)
-                    .background(if (selected) ShutterGold else Color.Transparent)
                     .clickable { onSelectZoom(zoomVal) }
             ) {
-                Text(
-                    text = label,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (selected) Color(0xFF141619) else Color.White
-                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) ShutterGold else Color.Transparent)
+                ) {
+                    Text(
+                        text = label,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) Color(0xFF141619) else Color.White
+                    )
+                }
             }
         }
     }

@@ -47,27 +47,19 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: |
-          CLIENT_ID="${WEB_CLIENT_ID:-://googleusercontent.com}"
-          PROJECT_NUM=$(echo "$CLIENT_ID" | cut -d'-' -f1)
-          DRIVE_KEY="${GOOGLE_DRIVE_API_KEY:-placeholder}"
-          GEMINI_KEY="${GEMINI_API_KEY:-placeholder}"
-          MAPS_KEY="${MAPS_API_KEY:-placeholder}"
+          CERT_SHA1=$(keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | awk -F': ' '/SHA1:/{gsub(/:/, "", $2); print tolower($2)}')
+          export CERT_SHA1
 
-          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> local.properties
-          printf "GOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" > secrets.properties
-          printf "\nGOOGLE_DRIVE_API_KEY=%s\nGEMINI_API_KEY=%s\nMAPS_API_KEY=%s\nGOOGLE_MAPS_API_KEY=%s\n" "$DRIVE_KEY" "$GEMINI_KEY" "$MAPS_KEY" "$MAPS_KEY" >> gradle.properties
-
-          cat << EOF > app/google-services.json
-          {
-            "project_info": { "project_number": "$PROJECT_NUM", "project_id": "yvgpscam-$PROJECT_NUM" },
-            "client": [{
-              "client_info": { "mobilesdk_app_id": "1:$PROJECT_NUM:android:0000000000000000", "android_client_info": { "package_name": "in.yourview.yvgpscam" } },
-              "oauth_client": [{ "client_id": "$CLIENT_ID", "client_type": 3 }],
-              "api_key": [{ "current_key": "$DRIVE_KEY" }]
-            }],
-            "configuration_version": "1"
-          }
-          EOF
+          # Write .env so secrets-gradle-plugin resolves configured keys cleanly
+          : > .env
+          if [ -n "$MAPS_API_KEY" ]; then
+            printf "MAPS_API_KEY=%s\n" "$MAPS_API_KEY" >> .env
+          else
+            printf "MAPS_API_KEY=MY_MAPS_API_KEY\n" >> .env
+          fi
+          if [ -n "$GEMINI_API_KEY" ]; then
+            printf "GEMINI_API_KEY=%s\n" "$GEMINI_API_KEY" >> .env
+          fi
 
           python3 .github/scripts/ci_injector.py
 
@@ -78,28 +70,21 @@ jobs:
           cache-read-only: true
 
       - name: Build Debug APK
+        env:
+          REPO: ${{ github.repository }}
         run: |
           BUILD_NUM=${{ github.run_number }}
-          VERSION_NAME="1.0.${BUILD_NUM}"
+          VERSION_NAME="1.1.${BUILD_NUM}"
           echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
-          cat << 'EOF' > ci-version.init.gradle
-          allprojects {
-              plugins.withId("com.android.application") {
-                  android { defaultConfig {
-                      versionCode = project.property("APP_VERSION_CODE").toString().toInteger()
-                      versionName = project.property("APP_VERSION_NAME").toString()
-                  } }
-              }
-          }
-          EOF
-          gradle clean assembleDebug --no-build-cache --no-configuration-cache --init-script ci-version.init.gradle -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -Djava.awt.headless=true
+          FEED_URL="https://github.com/${REPO}/releases/latest/download/update-manifest.json"
+          gradle clean assembleDebug --no-build-cache --no-configuration-cache -PAPP_VERSION_CODE=${BUILD_NUM} -PAPP_VERSION_NAME=${VERSION_NAME} -PUPDATE_MANIFEST_URL=${FEED_URL} -Djava.awt.headless=true
 
       - name: Rename APK & Generate Update Manifest
         env:
           REPO: ${{ github.repository }}
         run: |
           BUILD_NUM=${{ github.run_number }}
-          VER_NAME="1.0.${BUILD_NUM}"
+          VER_NAME="1.1.${BUILD_NUM}"
           APK_NAME="YVGPSCAM-v${VER_NAME}.apk"
           APK_FILE=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
           mkdir -p release-apk

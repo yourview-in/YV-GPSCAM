@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.UUID
 import kotlin.math.abs
 
@@ -488,6 +489,7 @@ class CameraViewModel(
             _hudState.update { it.copy(isCapturing = true) }
             val currentTel = telemetry.value
             val currentCfg = stampConfig.value
+            val currentRatio = _hudState.value.aspectRatio
             val mapBmp = obtainCaptureMiniMapBitmap(currentTel, currentCfg)
 
             val result = mediaStoreSaver.saveStampedJpegBytes(
@@ -497,7 +499,8 @@ class CameraViewModel(
                 miniMapBitmap = mapBmp,
                 mirrorHorizontal = isFrontCamera && currentCfg.mirrorFrontCamera,
                 isFrontCamera = isFrontCamera,
-                deviceOrientationDegrees = deviceOrientationDegrees
+                deviceOrientationDegrees = deviceOrientationDegrees,
+                targetAspectRatio = currentRatio
             )
 
             result.onSuccess { entity ->
@@ -527,27 +530,46 @@ class CameraViewModel(
         }
     }
 
-    fun saveRecordedVideo(videoUri: Uri, width: Int = 1080, height: Int = 1920) {
+    fun saveRecordedVideo(
+        rawVideoFile: File,
+        isFrontCamera: Boolean = false
+    ) {
         viewModelScope.launch {
-            val currentTel = telemetry.value
-            val currentCfg = stampConfig.value
-            val entity = mediaStoreSaver.buildRecordedVideoEntity(
-                videoUri = videoUri,
-                telemetry = currentTel,
-                config = currentCfg,
-                width = width,
-                height = height
-            )
-            photoRepository.insertPhoto(entity)
-            if (currentCfg.showNumbering || (currentCfg.customFileNameEnabled && currentCfg.fnIncludeSequence)) {
-                stampPrefs.incrementSequenceNumber()
-            }
             _hudState.update {
                 it.copy(
                     isRecordingVideo = false,
                     recordingElapsedSeconds = 0,
-                    statusMessage = "Video saved: ${entity.displayName}"
+                    statusMessage = "Stamping GPS onto video..."
                 )
+            }
+            val currentTel = telemetry.value
+            val currentCfg = stampConfig.value
+            val mapBmp = obtainCaptureMiniMapBitmap(currentTel, currentCfg)
+
+            val result = mediaStoreSaver.saveStampedVideoFile(
+                rawVideoFile = rawVideoFile,
+                telemetry = currentTel,
+                config = currentCfg,
+                miniMapBitmap = mapBmp,
+                isFrontCamera = isFrontCamera
+            )
+
+            result.onSuccess { entity ->
+                val insertedId = photoRepository.insertPhoto(entity)
+                val savedEntity = entity.copy(id = insertedId)
+                if (currentCfg.showNumbering || (currentCfg.customFileNameEnabled && currentCfg.fnIncludeSequence)) {
+                    stampPrefs.incrementSequenceNumber()
+                }
+                _hudState.update {
+                    it.copy(statusMessage = "Video saved: ${entity.displayName}")
+                }
+                if (currentCfg.autoShareAfterCapture || currentCfg.emailAfterCapture) {
+                    _postCaptureEvent.tryEmit(savedEntity)
+                }
+            }.onFailure { err ->
+                _hudState.update {
+                    it.copy(statusMessage = err.message ?: "Failed to save video")
+                }
             }
         }
     }

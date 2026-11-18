@@ -18,8 +18,12 @@ android {
     applicationId = "in.yourview.yvgpscam"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.1.0"
+    val propVersionCode = (project.findProperty("APP_VERSION_CODE") as? String)?.toIntOrNull()
+    val propVersionName = (project.findProperty("APP_VERSION_NAME") as? String)?.trim()?.takeIf { it.isNotBlank() }
+    val propUpdateFeedUrl = (project.findProperty("UPDATE_MANIFEST_URL") as? String)?.trim().orEmpty().replace("\"", "")
+    versionCode = propVersionCode ?: 2
+    versionName = propVersionName ?: "1.1.0"
+    buildConfigField("String", "DEFAULT_UPDATE_MANIFEST_URL", "\"$propUpdateFeedUrl\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     manifestPlaceholders["MAPS_API_KEY"] = "MY_MAPS_API_KEY"
@@ -133,6 +137,9 @@ dependencies {
   implementation(libs.play.services.location)
   implementation(libs.play.services.maps)
   implementation(libs.zxing.core)
+  implementation(libs.androidx.media3.transformer)
+  implementation(libs.androidx.media3.effect)
+  implementation(libs.androidx.media3.common)
   // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

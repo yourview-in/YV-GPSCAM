@@ -1,8 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">YVGPSCAM</string>
     <string name="nav_camera">Camera</string>
-    <string name="nav_gallery">Geotag Log</string>
-    <string name="nav_studio">Stamp Studio</string>
+    <string name="nav_gallery">Gallery</string>
+    <string name="nav_studio">Templates</string>
+    <string name="nav_offline">Offline</string>
+    <string name="nav_cloud">Drive</string>
+
     <string name="gps_locked">GPS LOCKED</string>
     <string name="gps_coarse">COARSE GPS</string>
     <string name="gps_acquiring">ACQUIRING GPS</string>
@@ -12,10 +16,88 @@
     <string name="toggle_flash">Toggle flash mode</string>
     <string name="toggle_grid">Toggle composition grid</string>
     <string name="import_photo">Stamp existing photo</string>
+
     <string name="permission_title_camera">Camera &amp; Location Access</string>
     <string name="permission_desc_camera">YVGPSCAM uses your camera and GPS sensors to capture photos stamped with live coordinates, mini-map, compass heading, and EXIF geotags.</string>
     <string name="grant_permissions">Enable Camera &amp; GPS</string>
     <string name="open_settings">Open App Settings</string>
     <string name="empty_gallery_title">No Geotagged Photos Yet</string>
     <string name="empty_gallery_subtitle">Capture a photo in the Camera tab or stamp an existing photo from your gallery to build your YVGPSCAM field log.</string>
+
+    <string name="camera_collection">Collection</string>
+    <string name="camera_locations">Locations</string>
+    <string name="camera_file_name">File Name</string>
+    <string name="camera_template">Template</string>
+    <string name="camera_tool_grid">Grid</string>
+    <string name="camera_tool_timer">Timer</string>
+    <string name="camera_tool_full_view">Full View</string>
+    <string name="camera_tool_auto_cap">Auto Cap</string>
+    <string name="camera_tool_burst">Burst</string>
+    <string name="camera_tool_torch">Torch</string>
+    <string name="camera_tool_level">Level</string>
+    <string name="camera_tool_mirror">Mirror</string>
+    <string name="camera_tool_voice">Voice</string>
+    <string name="camera_tool_offline">Offline</string>
+    <string name="camera_pill_add_text">Add Text</string>
+    <string name="camera_pill_note_added">Note Added</string>
+    <string name="camera_pill_stamp_photo">Stamp Photo</string>
+    <string name="camera_pill_google_drive">Google Drive</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_app_theme">App Theme</string>
+    <string name="settings_section_camera">Camera</string>
+    <string name="settings_photo_quality">Photo Quality</string>
+    <string name="settings_video_quality">Video Quality</string>
+    <string name="settings_volume_button">Volume Button</string>
+    <string name="settings_screen_tap">Screen Tap</string>
+    <string name="settings_qr_detection">QR Code Detection</string>
+    <string name="settings_qr_detection_sub">Detect QR codes live in camera preview</string>
+    <string name="settings_section_stamp">Stamp</string>
+    <string name="settings_stamp_orientation">Stamp Orientation</string>
+    <string name="settings_show_app_logo">Show App Logo</string>
+    <string name="settings_show_app_logo_sub">YVGPSCAM watermark permanently active</string>
+    <string name="settings_show_camera_indicator">Show Camera Indicator</string>
+    <string name="settings_show_camera_indicator_sub">Display Front or Rear lens badge on stamp</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="settings_auto_save_original">Auto Save Original Photo</string>
+    <string name="settings_auto_save_original_sub">Also save an unstamped copy to Pictures/YVGPSCAM/Originals</string>
+    <string name="settings_section_report">Report After Capture</string>
+    <string name="settings_email_photo">Email Photo</string>
+    <string name="settings_default_report_email">Default Report Email</string>
+    <string name="settings_pdf_report_generator">PDF Report Generator</string>
+    <string name="settings_pdf_report_sub">Compile multi-photo field telemetry report</string>
+    <string name="settings_share_photo">Share Photo</string>
+    <string name="settings_share_photo_sub">Automatically open Share Sheet after capture</string>
+    <string name="settings_reports_mode">Reports Mode on Camera</string>
+    <string name="settings_reports_mode_sub">Show REPORTS shortcut in camera mode strip</string>
+    <string name="settings_section_help">Help &amp; Support</string>
+    <string name="settings_image_on_map">Image on Map</string>
+    <string name="settings_image_on_map_sub">View captured photos pinned on interactive in-app map</string>
+    <string name="settings_offline_maps">Offline Map Tiles</string>
+    <string name="settings_offline_maps_sub">Manage cached regional map tiles</string>
+    <string name="settings_cloud_sync">Google Drive Backup &amp; Sync</string>
+    <string name="settings_cloud_sync_sub">Manage cloud backup account &amp; sync queue</string>
+    <string name="settings_auto_push_updates">Auto-Push Update Alerts</string>
+    <string name="settings_auto_push_updates_sub">Check automatically in background &amp; notify on new versions</string>
+    <string name="settings_auto_open_update">Auto-Open App After Update</string>
+    <string name="settings_auto_open_update_sub">Automatically launch YVGPSCAM when update installation completes</string>
+    <string name="settings_update_feed_url">Update Release Feed URL</string>
+    <string name="settings_check_updates">Check for Updates</string>
+    <string name="settings_about_app">About YVGPSCAM</string>
+    <string name="settings_maps_sdk_status">Google Maps API Status</string>
+    <string name="settings_maps_sdk_active">Active — Interactive Google Maps SDK enabled</string>
+    <string name="settings_maps_sdk_fallback">Fallback — Using CartoDB/ArcGIS/OSM + offline grid (add MAPS_API_KEY in Secrets to enable Google SDK)</string>
+
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_details">Details</string>
+    <string name="detail_gps_telemetry">GPS Location Telemetry</string>
+    <string name="cloud_title">Google Drive Auto Backup</string>
+    <string name="cloud_sign_in_google">Sign in with Google</string>
+    <string name="update_now">Update Now</string>
+    <string name="update_later">Later</string>
+    <string name="update_restart_install">Restart &amp; Install</string>
 </resources>

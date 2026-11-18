@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -99,12 +100,16 @@ import `in`.yourview.yvgpscam.data.model.ScreenTapAction
 import `in`.yourview.yvgpscam.data.model.StampOrientationMode
 import `in`.yourview.yvgpscam.data.model.VideoQualityLevel
 import `in`.yourview.yvgpscam.data.model.VolumeButtonAction
+import `in`.yourview.yvgpscam.map.GoogleMapsConfig
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import `in`.yourview.yvgpscam.ui.components.AdBannerSlot
 import `in`.yourview.yvgpscam.ui.components.ModernGlassCircleButton
 import `in`.yourview.yvgpscam.ui.theme.ShutterGold
 import `in`.yourview.yvgpscam.ui.theme.TelemetryEmerald
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraViewModel
+import `in`.yourview.yvgpscam.util.AppUpdateCoordinator
+import `in`.yourview.yvgpscam.util.AppUpdateInfoState
+import `in`.yourview.yvgpscam.util.LocaleHelper
 
 private enum class SettingsChoiceDialog {
     NONE,
@@ -129,13 +134,17 @@ fun SettingsScreen(
     onOpenOfflineMaps: () -> Unit,
     onOpenCloudSync: () -> Unit,
     autoPushUpdatesEnabled: Boolean = true,
+    autoOpenAfterUpdateEnabled: Boolean = true,
     manifestFeedUrl: String = "",
+    updateState: AppUpdateInfoState? = null,
     onToggleAutoPushUpdates: (Boolean) -> Unit = {},
+    onToggleAutoOpenAfterUpdate: (Boolean) -> Unit = {},
     onUpdateManifestFeedUrl: (String) -> Unit = {},
     onCheckForUpdates: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val installedBuild = remember(context) { AppUpdateCoordinator.resolveInstalledBuildInfo(context) }
     val config by viewModel.stampConfig.collectAsStateWithLifecycle()
     var activeDialog by remember { mutableStateOf(SettingsChoiceDialog.NONE) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -167,13 +176,13 @@ fun SettingsScreen(
         ) {
             ModernGlassCircleButton(
                 icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.settings_back),
                 inactiveIconTint = MaterialTheme.colorScheme.onBackground,
                 onClick = onBack,
                 testTag = "settings_back_button"
             )
             Text(
-                text = "Settings",
+                text = stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -187,17 +196,19 @@ fun SettingsScreen(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         LazyColumn(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .testTag("settings_list"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // GENERAL
             item {
-                SettingsSectionHeader("General")
+                SettingsSectionHeader(stringResource(R.string.settings_section_general))
                 SettingsCardContainer {
                     SettingsNavigationRow(
                         icon = Icons.Default.Language,
-                        title = "Language",
+                        title = stringResource(R.string.settings_language),
                         subtitle = config.appLanguage,
                         onClick = { activeDialog = SettingsChoiceDialog.LANGUAGE },
                         testTag = "settings_language_row"
@@ -205,7 +216,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.Palette,
-                        title = "App Theme",
+                        title = stringResource(R.string.settings_app_theme),
                         subtitle = config.appThemeMode.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.THEME },
                         testTag = "settings_theme_row"
@@ -215,11 +226,11 @@ fun SettingsScreen(
 
             // CAMERA
             item {
-                SettingsSectionHeader("Camera")
+                SettingsSectionHeader(stringResource(R.string.settings_section_camera))
                 SettingsCardContainer {
                     SettingsNavigationRow(
                         icon = Icons.Default.HighQuality,
-                        title = "Photo Quality",
+                        title = stringResource(R.string.settings_photo_quality),
                         subtitle = config.photoQuality.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.PHOTO_QUALITY },
                         testTag = "settings_photo_quality_row"
@@ -227,7 +238,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.Videocam,
-                        title = "Video Quality",
+                        title = stringResource(R.string.settings_video_quality),
                         subtitle = config.videoQuality.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.VIDEO_QUALITY },
                         testTag = "settings_video_quality_row"
@@ -235,7 +246,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.AutoMirrored.Filled.VolumeUp,
-                        title = "Volume Button",
+                        title = stringResource(R.string.settings_volume_button),
                         subtitle = config.volumeButtonAction.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.VOLUME_BUTTON },
                         testTag = "settings_volume_button_row"
@@ -243,7 +254,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.TouchApp,
-                        title = "Screen Tap",
+                        title = stringResource(R.string.settings_screen_tap),
                         subtitle = config.screenTapAction.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.SCREEN_TAP },
                         testTag = "settings_screen_tap_row"
@@ -251,8 +262,8 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsSwitchRow(
                         icon = Icons.Default.QrCodeScanner,
-                        title = "QR Code Detection",
-                        subtitle = "Detect QR codes live in camera preview",
+                        title = stringResource(R.string.settings_qr_detection),
+                        subtitle = stringResource(R.string.settings_qr_detection_sub),
                         checked = config.qrDetectionEnabled,
                         onCheckedChange = { enabled ->
                             viewModel.updateStampConfig { it.copy(qrDetectionEnabled = enabled) }
@@ -264,11 +275,11 @@ fun SettingsScreen(
 
             // STAMP
             item {
-                SettingsSectionHeader("Stamp")
+                SettingsSectionHeader(stringResource(R.string.settings_section_stamp))
                 SettingsCardContainer {
                     SettingsNavigationRow(
                         icon = Icons.Default.ScreenRotation,
-                        title = "Stamp Orientation",
+                        title = stringResource(R.string.settings_stamp_orientation),
                         subtitle = config.stampOrientation.displayName,
                         onClick = { activeDialog = SettingsChoiceDialog.STAMP_ORIENTATION },
                         testTag = "settings_stamp_orientation_row"
@@ -305,7 +316,7 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    text = "Show App Logo",
+                                    text = stringResource(R.string.settings_show_app_logo),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -317,7 +328,7 @@ fun SettingsScreen(
                                 )
                             }
                             Text(
-                                text = "YVGPSCAM watermark permanently active",
+                                text = stringResource(R.string.settings_show_app_logo_sub),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -338,8 +349,8 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsSwitchRow(
                         icon = Icons.Default.CameraAlt,
-                        title = "Show Camera Indicator",
-                        subtitle = "Display Front or Rear lens badge on stamp",
+                        title = stringResource(R.string.settings_show_camera_indicator),
+                        subtitle = stringResource(R.string.settings_show_camera_indicator_sub),
                         checked = config.showCameraIndicator,
                         onCheckedChange = { enabled ->
                             viewModel.updateStampConfig { it.copy(showCameraIndicator = enabled) }
@@ -351,12 +362,12 @@ fun SettingsScreen(
 
             // STORAGE
             item {
-                SettingsSectionHeader("Storage")
+                SettingsSectionHeader(stringResource(R.string.settings_section_storage))
                 SettingsCardContainer {
                     SettingsSwitchRow(
                         icon = Icons.Default.SaveAlt,
-                        title = "Auto Save Original Photo",
-                        subtitle = "Also save an unstamped copy to Pictures/YVGPSCAM/Originals",
+                        title = stringResource(R.string.settings_auto_save_original),
+                        subtitle = stringResource(R.string.settings_auto_save_original_sub),
                         checked = config.autoSaveOriginalPhoto,
                         onCheckedChange = { enabled ->
                             viewModel.updateStampConfig { it.copy(autoSaveOriginalPhoto = enabled) }
@@ -368,11 +379,11 @@ fun SettingsScreen(
 
             // REPORT AFTER CAPTURE
             item {
-                SettingsSectionHeader("Report After Capture")
+                SettingsSectionHeader(stringResource(R.string.settings_section_report))
                 SettingsCardContainer {
                     SettingsSwitchRow(
                         icon = Icons.Default.Email,
-                        title = "Email Photo",
+                        title = stringResource(R.string.settings_email_photo),
                         subtitle = if (config.defaultReportEmail.isNotBlank()) {
                             "Send to ${config.defaultReportEmail}"
                         } else {
@@ -387,7 +398,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.Description,
-                        title = "Default Report Email",
+                        title = stringResource(R.string.settings_default_report_email),
                         subtitle = config.defaultReportEmail.ifBlank { "Tap to set recipient email" },
                         onClick = { activeDialog = SettingsChoiceDialog.EMAIL_ADDRESS },
                         testTag = "settings_report_email_row"
@@ -395,16 +406,16 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.PictureAsPdf,
-                        title = "PDF Report Generator",
-                        subtitle = "Compile multi-photo field telemetry report",
+                        title = stringResource(R.string.settings_pdf_report_generator),
+                        subtitle = stringResource(R.string.settings_pdf_report_sub),
                         onClick = onOpenPdfReport,
                         testTag = "settings_pdf_report_row"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsSwitchRow(
                         icon = Icons.Default.Share,
-                        title = "Share Photo",
-                        subtitle = "Automatically open Share Sheet after capture",
+                        title = stringResource(R.string.settings_share_photo),
+                        subtitle = stringResource(R.string.settings_share_photo_sub),
                         checked = config.autoShareAfterCapture,
                         onCheckedChange = { enabled ->
                             viewModel.updateStampConfig { it.copy(autoShareAfterCapture = enabled) }
@@ -414,8 +425,8 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsSwitchRow(
                         icon = Icons.Default.PictureAsPdf,
-                        title = "Reports Mode on Camera",
-                        subtitle = "Show REPORTS shortcut in camera mode strip",
+                        title = stringResource(R.string.settings_reports_mode),
+                        subtitle = stringResource(R.string.settings_reports_mode_sub),
                         checked = config.showReportsModeOnCamera,
                         onCheckedChange = { enabled ->
                             viewModel.updateStampConfig { it.copy(showReportsModeOnCamera = enabled) }
@@ -427,36 +438,57 @@ fun SettingsScreen(
 
             // HELP & SUPPORT
             item {
-                SettingsSectionHeader("Help & Support")
+                val mapsConfigured = remember { GoogleMapsConfig.isApiKeyConfigured() }
+                SettingsSectionHeader(stringResource(R.string.settings_section_help))
                 SettingsCardContainer {
                     SettingsNavigationRow(
                         icon = Icons.Default.Map,
-                        title = "Image on Map",
-                        subtitle = "View captured photos pinned on interactive in-app map",
+                        title = stringResource(R.string.settings_image_on_map),
+                        subtitle = stringResource(R.string.settings_image_on_map_sub),
                         onClick = onOpenImageOnMap,
                         testTag = "settings_image_on_map_row"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.OfflinePin,
-                        title = "Offline Map Tiles",
-                        subtitle = "Manage cached regional map tiles",
+                        title = stringResource(R.string.settings_offline_maps),
+                        subtitle = stringResource(R.string.settings_offline_maps_sub),
                         onClick = onOpenOfflineMaps,
                         testTag = "settings_offline_maps_row"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.CloudUpload,
-                        title = "Google Drive Backup & Sync",
-                        subtitle = "Manage cloud backup account & sync queue",
+                        title = stringResource(R.string.settings_cloud_sync),
+                        subtitle = stringResource(R.string.settings_cloud_sync_sub),
                         onClick = onOpenCloudSync,
                         testTag = "settings_cloud_sync_row"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsNavigationRow(
+                        icon = Icons.Default.Map,
+                        title = stringResource(R.string.settings_maps_sdk_status),
+                        subtitle = stringResource(
+                            if (mapsConfigured) R.string.settings_maps_sdk_active else R.string.settings_maps_sdk_fallback
+                        ),
+                        onClick = {
+                            Toast.makeText(
+                                context,
+                                if (mapsConfigured) {
+                                    "Google Maps SDK key is active via BuildConfig.MAPS_API_KEY."
+                                } else {
+                                    "Add MAPS_API_KEY in AI Studio Secrets or GitHub CI secrets to enable interactive Google Maps tiles."
+                                },
+                                Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        testTag = "settings_maps_status_row"
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsSwitchRow(
                         icon = Icons.Default.NotificationsActive,
-                        title = "Auto-Push Update Alerts",
-                        subtitle = "Check automatically in background & notify on new versions",
+                        title = stringResource(R.string.settings_auto_push_updates),
+                        subtitle = stringResource(R.string.settings_auto_push_updates_sub),
                         checked = autoPushUpdatesEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -470,9 +502,18 @@ fun SettingsScreen(
                         testTag = "settings_auto_push_updates_switch"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsSwitchRow(
+                        icon = Icons.Default.SystemUpdate,
+                        title = stringResource(R.string.settings_auto_open_update),
+                        subtitle = stringResource(R.string.settings_auto_open_update_sub),
+                        checked = autoOpenAfterUpdateEnabled,
+                        onCheckedChange = onToggleAutoOpenAfterUpdate,
+                        testTag = "settings_auto_open_after_update_switch"
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.Link,
-                        title = "Update Release Feed URL",
+                        title = stringResource(R.string.settings_update_feed_url),
                         subtitle = manifestFeedUrl.ifBlank { "Uses Google Play Store (tap to add custom APK feed)" },
                         onClick = { activeDialog = SettingsChoiceDialog.UPDATE_FEED_URL },
                         testTag = "settings_update_feed_url_row"
@@ -480,16 +521,23 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.SystemUpdate,
-                        title = "Check for Updates",
-                        subtitle = "Installed v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                        title = stringResource(R.string.settings_check_updates),
+                        subtitle = when {
+                            updateState?.isDownloading == true ->
+                                updateState.statusDetail ?: "Downloading update..."
+                            updateState != null ->
+                                "Update available: ${updateState.availableVersionLabel} (Tap to install)"
+                            else ->
+                                "Installed v${installedBuild.versionName} (Build ${installedBuild.versionCode}) • ${installedBuild.deviceModel}"
+                        },
                         onClick = onCheckForUpdates,
                         testTag = "settings_check_updates_row"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsNavigationRow(
                         icon = Icons.Default.Info,
-                        title = "About YVGPSCAM",
-                        subtitle = "GPS telemetry camera & field reporting suite",
+                        title = stringResource(R.string.settings_about_app),
+                        subtitle = "v${installedBuild.versionName} (Build ${installedBuild.versionCode}) • ${installedBuild.deviceModel}",
                         onClick = { activeDialog = SettingsChoiceDialog.ABOUT_APP },
                         testTag = "settings_about_row"
                     )
@@ -504,11 +552,12 @@ fun SettingsScreen(
     when (activeDialog) {
         SettingsChoiceDialog.LANGUAGE -> {
             SingleChoiceSettingsDialog(
-                title = "App Language",
-                options = listOf("English", "Hindi", "Telugu", "Spanish", "French"),
+                title = stringResource(R.string.settings_language),
+                options = LocaleHelper.SUPPORTED_LANGUAGES,
                 selected = config.appLanguage,
                 labelMapper = { it },
                 onSelect = { lang ->
+                    LocaleHelper.syncSystemPerAppLocale(context, lang)
                     viewModel.updateStampConfig { it.copy(appLanguage = lang) }
                     activeDialog = SettingsChoiceDialog.NONE
                 },
@@ -631,12 +680,12 @@ fun SettingsScreen(
                             contentColor = Color(0xFF141619)
                         )
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.action_save), fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { activeDialog = SettingsChoiceDialog.NONE }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -646,7 +695,7 @@ fun SettingsScreen(
             var urlDraft by remember(manifestFeedUrl) { mutableStateOf(manifestFeedUrl) }
             AlertDialog(
                 onDismissRequest = { activeDialog = SettingsChoiceDialog.NONE },
-                title = { Text("Update Release Feed URL") },
+                title = { Text(stringResource(R.string.settings_update_feed_url)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
@@ -678,12 +727,12 @@ fun SettingsScreen(
                             contentColor = Color(0xFF141619)
                         )
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.action_save), fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { activeDialog = SettingsChoiceDialog.NONE }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -708,9 +757,18 @@ fun SettingsScreen(
                     }
                 },
                 text = {
-                    Text(
-                        text = "YVGPSCAM captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, Google Maps tiles, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports."
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "YVGPSCAM captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, Google Maps tiles, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(
+                            text = "App Version: v${installedBuild.versionName} (Build ${installedBuild.versionCode})\nPackage: ${installedBuild.packageName}\nBuild Model: ${installedBuild.deviceModel}\nAndroid OS: Android ${installedBuild.androidVersion} (${installedBuild.buildDisplay})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 },
                 confirmButton = {
                     TextButton(onClick = { activeDialog = SettingsChoiceDialog.NONE }) {
@@ -792,7 +850,7 @@ private fun SettingsNavigationRow(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -909,7 +967,7 @@ private fun <T> SingleChoiceSettingsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

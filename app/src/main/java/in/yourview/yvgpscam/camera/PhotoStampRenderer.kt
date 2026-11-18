@@ -48,7 +48,91 @@ class PhotoStampRenderer(private val context: Context) {
         val w = output.width.toFloat()
         val h = output.height.toFloat()
         val shortEdge = min(w, h)
+        val outerMargin = shortEdge * 0.028f
 
+        val layout = prepareStampCardLayout(
+            frameWidth = w,
+            frameHeight = h,
+            telemetry = telemetry,
+            config = config,
+            miniMapBitmap = miniMapBitmap,
+            capturedAtMillis = capturedAtMillis
+        )
+
+        val cardLeft = when (config.stampPosition) {
+            StampPosition.TOP_LEFT, StampPosition.BOTTOM_LEFT -> outerMargin
+            StampPosition.TOP_RIGHT, StampPosition.BOTTOM_RIGHT -> (w - outerMargin - layout.cardWidth).coerceAtLeast(outerMargin)
+            StampPosition.TOP_CENTER, StampPosition.BOTTOM_CENTER -> ((w - layout.cardWidth) / 2f).coerceAtLeast(outerMargin)
+        }
+
+        val cardTop = when (config.stampPosition) {
+            StampPosition.TOP_LEFT, StampPosition.TOP_CENTER, StampPosition.TOP_RIGHT -> outerMargin
+            StampPosition.BOTTOM_LEFT, StampPosition.BOTTOM_CENTER, StampPosition.BOTTOM_RIGHT ->
+                (h - outerMargin - layout.cardHeight).coerceAtLeast(outerMargin)
+        }
+
+        drawStampCardOnCanvas(
+            canvas = canvas,
+            cardLeft = cardLeft,
+            cardTop = cardTop,
+            layout = layout,
+            telemetry = telemetry,
+            config = config,
+            isFrontCamera = isFrontCamera
+        )
+
+        return output
+    }
+
+    /**
+     * Renders the stamp card onto a tightly sized transparent ARGB_8888 bitmap
+     * suitable for Media3 video overlay compositing.
+     */
+    fun renderStampCardOnly(
+        frameWidth: Int,
+        frameHeight: Int,
+        telemetry: GpsTelemetry,
+        config: StampConfig,
+        miniMapBitmap: Bitmap?,
+        capturedAtMillis: Long = System.currentTimeMillis(),
+        isFrontCamera: Boolean = false
+    ): Bitmap {
+        val safeW = frameWidth.coerceAtLeast(480).toFloat()
+        val safeH = frameHeight.coerceAtLeast(480).toFloat()
+        val layout = prepareStampCardLayout(
+            frameWidth = safeW,
+            frameHeight = safeH,
+            telemetry = telemetry,
+            config = config,
+            miniMapBitmap = miniMapBitmap,
+            capturedAtMillis = capturedAtMillis
+        )
+        val outW = kotlin.math.ceil(layout.cardWidth.toDouble()).toInt().coerceAtLeast(16)
+        val outH = kotlin.math.ceil(layout.cardHeight.toDouble()).toInt().coerceAtLeast(16)
+        val cardBitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+        cardBitmap.eraseColor(Color.TRANSPARENT)
+        val canvas = Canvas(cardBitmap)
+        drawStampCardOnCanvas(
+            canvas = canvas,
+            cardLeft = 0f,
+            cardTop = 0f,
+            layout = layout,
+            telemetry = telemetry,
+            config = config,
+            isFrontCamera = isFrontCamera
+        )
+        return cardBitmap
+    }
+
+    private fun prepareStampCardLayout(
+        frameWidth: Float,
+        frameHeight: Float,
+        telemetry: GpsTelemetry,
+        config: StampConfig,
+        miniMapBitmap: Bitmap?,
+        capturedAtMillis: Long
+    ): PreparedStampCardLayout {
+        val shortEdge = min(frameWidth, frameHeight)
         val baseScale = (shortEdge / 1080f).coerceAtLeast(0.45f) * config.stampSize.scaleFactor
         val outerMargin = shortEdge * 0.028f
 
@@ -82,9 +166,9 @@ class PhotoStampRenderer(private val context: Context) {
         }
 
         val maxCardWidth = when (config.template) {
-            StampTemplate.CORNER_BADGE -> (w - outerMargin * 2f) * 0.78f
-            StampTemplate.MINIMAL_BAR -> w - outerMargin * 2f
-            else -> min(w - outerMargin * 2f, shortEdge * 0.98f * config.stampSize.scaleFactor.coerceAtMost(1.04f))
+            StampTemplate.CORNER_BADGE -> (frameWidth - outerMargin * 2f) * 0.78f
+            StampTemplate.MINIMAL_BAR -> frameWidth - outerMargin * 2f
+            else -> min(frameWidth - outerMargin * 2f, shortEdge * 0.98f * config.stampSize.scaleFactor.coerceAtMost(1.04f))
         }
 
         val cardPadding = 20f * baseScale
@@ -126,25 +210,43 @@ class PhotoStampRenderer(private val context: Context) {
         val textLines = mutableListOf<StampTextLine>()
 
         if (config.layoutTemplate == StampLayoutTemplate.REPORTING) {
+            val statusPart = "[${config.reportingLabel.ifBlank { "Check In" }.uppercase(Locale.US)}]"
+            val fullStatus = if (config.showNumbering) "$statusPart  #${config.photoSequenceNumber}" else statusPart
             textLines.add(
                 StampTextLine(
-                    text = "[${config.reportingLabel.ifBlank { "Check In" }.uppercase(Locale.US)}]",
+                    text = fullStatus,
                     size = bodyFontSize,
                     color = Color.rgb(16, 224, 154),
                     typeface = typefaceBold
                 )
             )
         } else if (config.layoutTemplate == StampLayoutTemplate.DATETIME) {
-            val timeOnly = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(capturedAtMillis))
-            val dateOnly = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date(capturedAtMillis))
-            textLines.add(
-                StampTextLine(
-                    text = "$timeOnly  |  $dateOnly",
-                    size = headlineFontSize * 1.06f,
-                    color = Color.rgb(245, 197, 24),
-                    typeface = typefaceBold
+            if (config.showDateTime) {
+                val timeOnly = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(capturedAtMillis))
+                val dateOnly = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date(capturedAtMillis))
+                textLines.add(
+                    StampTextLine(
+                        text = "$timeOnly  |  $dateOnly",
+                        size = headlineFontSize * 1.06f,
+                        color = Color.rgb(245, 197, 24),
+                        typeface = typefaceBold
+                    )
                 )
-            )
+            }
+            val extras = buildList {
+                if (config.showTimeZone) add(telemetry.formatTimeZoneOffset(capturedAtMillis))
+                if (config.showNumbering) add("#${config.photoSequenceNumber}")
+            }
+            if (extras.isNotEmpty()) {
+                textLines.add(
+                    StampTextLine(
+                        text = extras.joinToString(" • "),
+                        size = bodyFontSize,
+                        color = bodyTextColor,
+                        typeface = typefacePrimary
+                    )
+                )
+            }
         } else if (config.layoutTemplate == StampLayoutTemplate.NAVIGATIONAL_COMPASS) {
             textLines.add(
                 StampTextLine(
@@ -210,7 +312,9 @@ class PhotoStampRenderer(private val context: Context) {
             val timeParts = buildList {
                 if (config.showDateTime) add(telemetry.formatTimestamp(config.dateTimeFormat, capturedAtMillis))
                 if (config.showTimeZone) add(telemetry.formatTimeZoneOffset(capturedAtMillis))
-                if (config.showNumbering) add("#${config.photoSequenceNumber}")
+                if (config.showNumbering && config.layoutTemplate != StampLayoutTemplate.REPORTING) {
+                    add("#${config.photoSequenceNumber}")
+                }
             }
             if (timeParts.isNotEmpty()) {
                 textLines.add(
@@ -277,7 +381,7 @@ class PhotoStampRenderer(private val context: Context) {
         }
 
         val cardWidth = when (config.template) {
-            StampTemplate.MINIMAL_BAR -> w - outerMargin * 2f
+            StampTemplate.MINIMAL_BAR -> frameWidth - outerMargin * 2f
             else -> maxCardWidth
         }
 
@@ -322,52 +426,82 @@ class PhotoStampRenderer(private val context: Context) {
         val brandHeight = logoBadgeSize + 64f * baseScale
         val metricsRowHeight = if (metricsList.isNotEmpty()) metaFontSize * 1.6f + 8f * baseScale else 0f
         val contentHeight = maxOf(215f * baseScale, maxOf(textHeight, brandHeight) + metricsRowHeight)
-        val cardHeight = (contentHeight + cardPadding * 2f).coerceAtMost(h * 0.44f)
+        val cardHeight = (contentHeight + cardPadding * 2f).coerceAtMost(frameHeight * 0.44f)
 
-        val cardLeft = when (config.stampPosition) {
-            StampPosition.TOP_LEFT, StampPosition.BOTTOM_LEFT -> outerMargin
-            StampPosition.TOP_RIGHT, StampPosition.BOTTOM_RIGHT -> (w - outerMargin - cardWidth).coerceAtLeast(outerMargin)
-            StampPosition.TOP_CENTER, StampPosition.BOTTOM_CENTER -> ((w - cardWidth) / 2f).coerceAtLeast(outerMargin)
-        }
+        return PreparedStampCardLayout(
+            baseScale = baseScale,
+            isLight = isLight,
+            accentInt = accentInt,
+            foregroundAlphaInt = foregroundAlphaInt,
+            logoAlphaInt = logoAlphaInt,
+            cardBgColor = cardBgColor,
+            titleTextColor = titleTextColor,
+            cardWidth = cardWidth,
+            cardHeight = cardHeight,
+            cardPadding = cardPadding,
+            cornerRadius = cornerRadius,
+            useQrPanel = useQrPanel,
+            useCompassPanel = useCompassPanel,
+            qrBitmap = qrBitmap,
+            activeMiniMap = activeMiniMap,
+            leftModuleWidth = leftModuleWidth,
+            leftModuleGap = leftModuleGap,
+            brandColWidth = brandColWidth,
+            logoBadgeSize = logoBadgeSize,
+            metaFontSize = metaFontSize,
+            metricsRowHeight = metricsRowHeight,
+            lineSpacing = lineSpacing,
+            typefaceBold = typefaceBold,
+            typefaceMono = typefaceMono,
+            wrappedRows = wrappedRows,
+            metricsList = metricsList
+        )
+    }
 
-        val cardTop = when (config.stampPosition) {
-            StampPosition.TOP_LEFT, StampPosition.TOP_CENTER, StampPosition.TOP_RIGHT -> outerMargin
-            StampPosition.BOTTOM_LEFT, StampPosition.BOTTOM_CENTER, StampPosition.BOTTOM_RIGHT ->
-                (h - outerMargin - cardHeight).coerceAtLeast(outerMargin)
-        }
-
-        val cardRect = RectF(cardLeft, cardTop, cardLeft + cardWidth, cardTop + cardHeight)
+    private fun drawStampCardOnCanvas(
+        canvas: Canvas,
+        cardLeft: Float,
+        cardTop: Float,
+        layout: PreparedStampCardLayout,
+        telemetry: GpsTelemetry,
+        config: StampConfig,
+        isFrontCamera: Boolean
+    ) {
+        val baseScale = layout.baseScale
+        val cardPadding = layout.cardPadding
+        val cardRect = RectF(cardLeft, cardTop, cardLeft + layout.cardWidth, cardTop + layout.cardHeight)
 
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = cardBgColor
+            color = layout.cardBgColor
             style = Paint.Style.FILL
         }
-        canvas.drawRoundRect(cardRect, cornerRadius, cornerRadius, bgPaint)
+        canvas.drawRoundRect(cardRect, layout.cornerRadius, layout.cornerRadius, bgPaint)
 
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (isLight) Color.argb(80, 14, 23, 28) else Color.argb(46, 255, 255, 255)
+            color = if (layout.isLight) Color.argb(80, 14, 23, 28) else Color.argb(46, 255, 255, 255)
             style = Paint.Style.STROKE
             strokeWidth = (1.6f * baseScale).coerceAtLeast(1f)
         }
-        canvas.drawRoundRect(cardRect, cornerRadius, cornerRadius, strokePaint)
+        canvas.drawRoundRect(cardRect, layout.cornerRadius, layout.cornerRadius, strokePaint)
 
         val contentLeft = cardRect.left + cardPadding
 
         // Left module: QR Code, Compass Dial, or Mini-Map
-        if (useQrPanel && qrBitmap != null) {
-            val qrSize = min(leftModuleWidth, cardRect.height() - cardPadding * 2f - 22f * baseScale)
+        if (layout.useQrPanel && layout.qrBitmap != null) {
+            val qrSize = min(layout.leftModuleWidth, cardRect.height() - cardPadding * 2f - 22f * baseScale)
             val qrRect = RectF(contentLeft, cardRect.top + cardPadding, contentLeft + qrSize, cardRect.top + cardPadding + qrSize)
-            drawRoundedBitmap(canvas, qrBitmap, qrRect, 12f * baseScale, 255)
+            drawRoundedBitmap(canvas, layout.qrBitmap, qrRect, 12f * baseScale, 255)
             val qrCapPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(245, 197, 24)
                 textSize = 14f * baseScale
-                typeface = typefaceMono
+                typeface = layout.typefaceMono
                 textAlign = Paint.Align.CENTER
             }
             canvas.drawText("SCAN LOCATION", qrRect.centerX(), qrRect.bottom + 18f * baseScale, qrCapPaint)
-        } else if (useCompassPanel) {
-            val dialRadius = min(leftModuleWidth, cardRect.height() - cardPadding * 2f) * 0.44f
-            val dialCenterX = contentLeft + leftModuleWidth / 2f
+            layout.qrBitmap.recycle()
+        } else if (layout.useCompassPanel) {
+            val dialRadius = min(layout.leftModuleWidth, cardRect.height() - cardPadding * 2f) * 0.44f
+            val dialCenterX = contentLeft + layout.leftModuleWidth / 2f
             val dialCenterY = cardRect.centerY()
             drawCompassDial(
                 canvas = canvas,
@@ -377,14 +511,20 @@ class PhotoStampRenderer(private val context: Context) {
                 azimuthDegrees = telemetry.compassAzimuth,
                 baseScale = baseScale
             )
-        } else if (activeMiniMap != null) {
+        } else if (layout.activeMiniMap != null && !layout.activeMiniMap.isRecycled) {
             val mapRect = RectF(
                 contentLeft,
                 cardRect.top + cardPadding,
-                contentLeft + leftModuleWidth,
+                contentLeft + layout.leftModuleWidth,
                 cardRect.bottom - cardPadding
             )
-            drawRoundedBitmap(canvas, activeMiniMap, mapRect, 14f * baseScale, foregroundAlphaInt.coerceAtLeast(220))
+            drawRoundedBitmap(
+                canvas,
+                layout.activeMiniMap,
+                mapRect,
+                14f * baseScale,
+                layout.foregroundAlphaInt.coerceAtLeast(220)
+            )
             val mapBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(90, 255, 255, 255)
                 style = Paint.Style.STROKE
@@ -393,12 +533,12 @@ class PhotoStampRenderer(private val context: Context) {
             canvas.drawRoundRect(mapRect, 14f * baseScale, 14f * baseScale, mapBorder)
         }
 
-        val actualInfoLeft = contentLeft + leftModuleWidth + leftModuleGap
+        val actualInfoLeft = contentLeft + layout.leftModuleWidth + layout.leftModuleGap
         var cursorY = cardRect.top + cardPadding
 
-        val metricsReserve = if (metricsList.isNotEmpty()) metricsRowHeight + 4f * baseScale else 0f
+        val metricsReserve = if (layout.metricsList.isNotEmpty()) layout.metricsRowHeight + 4f * baseScale else 0f
         val maxTextBottom = cardRect.bottom - cardPadding - metricsReserve
-        for ((renderedText, line) in wrappedRows) {
+        for ((renderedText, line) in layout.wrappedRows) {
             if (cursorY + line.size > maxTextBottom) break
             val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = line.color
@@ -407,30 +547,30 @@ class PhotoStampRenderer(private val context: Context) {
             }
             cursorY += line.size
             canvas.drawText(renderedText, actualInfoLeft, cursorY, paint)
-            cursorY += lineSpacing + line.size * 0.2f
+            cursorY += layout.lineSpacing + line.size * 0.2f
         }
 
         // Right Mandatory Brand Column
-        val brandColCenterX = cardRect.right - cardPadding - brandColWidth / 2f
-        val logoLeft = brandColCenterX - logoBadgeSize / 2f
+        val brandColCenterX = cardRect.right - cardPadding - layout.brandColWidth / 2f
+        val logoLeft = brandColCenterX - layout.logoBadgeSize / 2f
         val logoTop = cardRect.top + cardPadding + 4f * baseScale
         val logoBmp = LogoBitmapProvider.loadStampLogoBitmap(
             context = context,
-            targetSizePx = logoBadgeSize.roundToInt().coerceAtLeast(64)
+            targetSizePx = layout.logoBadgeSize.roundToInt().coerceAtLeast(64)
         )
-        val logoRect = RectF(logoLeft, logoTop, logoLeft + logoBadgeSize, logoTop + logoBadgeSize)
-        drawRoundedBitmap(canvas, logoBmp, logoRect, 16f * baseScale, logoAlphaInt)
+        val logoRect = RectF(logoLeft, logoTop, logoLeft + layout.logoBadgeSize, logoTop + layout.logoBadgeSize)
+        drawRoundedBitmap(canvas, logoBmp, logoRect, 16f * baseScale, layout.logoAlphaInt)
         logoBmp.recycle()
 
         val brandLabel = config.customBrandLabel.ifBlank { "YVGPSCAM" }
         val brandPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = titleTextColor
+            color = layout.titleTextColor
             textSize = 18.5f * baseScale
-            typeface = typefaceBold
+            typeface = layout.typefaceBold
             textAlign = Paint.Align.CENTER
         }
         val brandTextY = logoRect.bottom + 22f * baseScale
-        val truncatedBrand = TextUtils.ellipsize(brandLabel, brandPaint, brandColWidth, TextUtils.TruncateAt.END).toString()
+        val truncatedBrand = TextUtils.ellipsize(brandLabel, brandPaint, layout.brandColWidth, TextUtils.TruncateAt.END).toString()
         canvas.drawText(truncatedBrand, brandColCenterX, brandTextY, brandPaint)
 
         val rightSubText = when {
@@ -443,38 +583,38 @@ class PhotoStampRenderer(private val context: Context) {
             color = if (config.showWeather && telemetry.weatherTempCelsius != null) {
                 Color.rgb(245, 197, 24)
             } else if (telemetry.hasFix) {
-                accentInt
+                layout.accentInt
             } else {
                 Color.rgb(245, 197, 24)
             }
             textSize = 17f * baseScale
-            typeface = typefaceMono
+            typeface = layout.typefaceMono
             textAlign = Paint.Align.CENTER
         }
         canvas.drawText(rightSubText, brandColCenterX, brandTextY + 24f * baseScale, accPaint)
 
-        if (metricsList.isNotEmpty()) {
+        if (layout.metricsList.isNotEmpty()) {
             val metricsY = cardRect.bottom - cardPadding - 4f * baseScale
             var metricCursorX = actualInfoLeft
             val metricTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = titleTextColor
-                textSize = metaFontSize
-                typeface = typefaceMono
+                color = layout.titleTextColor
+                textSize = layout.metaFontSize
+                typeface = layout.typefaceMono
             }
             val dotRadius = 5.5f * baseScale
             val availableRight = cardRect.right - cardPadding
-            for ((label, dotColor) in metricsList) {
+            for ((label, dotColor) in layout.metricsList) {
                 val textW = metricTextPaint.measureText(label)
                 val itemTotalW = dotRadius * 2f + 8f * baseScale + textW + 22f * baseScale
                 if (metricCursorX + textW + dotRadius * 2f > availableRight) break
 
                 val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.argb(foregroundAlphaInt, Color.red(dotColor), Color.green(dotColor), Color.blue(dotColor))
+                    color = Color.argb(layout.foregroundAlphaInt, Color.red(dotColor), Color.green(dotColor), Color.blue(dotColor))
                     style = Paint.Style.FILL
                 }
                 canvas.drawCircle(
                     metricCursorX + dotRadius,
-                    metricsY - metaFontSize * 0.34f,
+                    metricsY - layout.metaFontSize * 0.34f,
                     dotRadius,
                     dotPaint
                 )
@@ -482,9 +622,36 @@ class PhotoStampRenderer(private val context: Context) {
                 metricCursorX += itemTotalW
             }
         }
-
-        return output
     }
+
+    private data class PreparedStampCardLayout(
+        val baseScale: Float,
+        val isLight: Boolean,
+        val accentInt: Int,
+        val foregroundAlphaInt: Int,
+        val logoAlphaInt: Int,
+        val cardBgColor: Int,
+        val titleTextColor: Int,
+        val cardWidth: Float,
+        val cardHeight: Float,
+        val cardPadding: Float,
+        val cornerRadius: Float,
+        val useQrPanel: Boolean,
+        val useCompassPanel: Boolean,
+        val qrBitmap: Bitmap?,
+        val activeMiniMap: Bitmap?,
+        val leftModuleWidth: Float,
+        val leftModuleGap: Float,
+        val brandColWidth: Float,
+        val logoBadgeSize: Float,
+        val metaFontSize: Float,
+        val metricsRowHeight: Float,
+        val lineSpacing: Float,
+        val typefaceBold: Typeface,
+        val typefaceMono: Typeface,
+        val wrappedRows: List<Pair<String, StampTextLine>>,
+        val metricsList: List<Pair<String, Int>>
+    )
 
     private fun drawCompassDial(
         canvas: Canvas,

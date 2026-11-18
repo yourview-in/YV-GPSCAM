@@ -36,12 +36,17 @@ sealed interface DriveAuthOutcome {
 object GoogleDriveAuthHelper {
     private const val TAG = "GoogleDriveAuth"
 
+    private fun resolveWebClientId(context: Context): String? =
+        runCatching { context.getString(R.string.default_web_client_id) }
+            .getOrNull()
+            ?.trim()
+            ?.takeIf { it.endsWith(".apps.googleusercontent.com") && !it.startsWith("://") }
+
     suspend fun attemptSilentGoogleSignIn(
         context: Context,
         credentialManager: CredentialManager
     ): GoogleAccountProfile? {
-        val clientId = runCatching { context.getString(R.string.default_web_client_id) }.getOrNull()
-            ?: return null
+        val clientId = resolveWebClientId(context) ?: return null
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(true)
             .setServerClientId(clientId)
@@ -63,8 +68,12 @@ object GoogleDriveAuthHelper {
         activity: Activity,
         credentialManager: CredentialManager
     ): Result<GoogleAccountProfile?> {
-        val clientId = runCatching { activity.getString(R.string.default_web_client_id) }.getOrNull()
-            ?: return Result.failure(IllegalStateException("Google Sign-In configuration missing (default_web_client_id)."))
+        val clientId = resolveWebClientId(activity)
+            ?: return Result.failure(
+                IllegalStateException(
+                    "Google Sign-In OAuth Web Client ID is missing or invalid in google-services.json (default_web_client_id)."
+                )
+            )
 
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
         val request = GetCredentialRequest.Builder()
@@ -83,7 +92,16 @@ object GoogleDriveAuthHelper {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed", e)
-            Result.failure(e)
+            val rawMsg = e.localizedMessage.orEmpty()
+            val friendly = if (rawMsg.contains("28444") || rawMsg.contains("10:") || rawMsg.contains("Developer console", ignoreCase = true)) {
+                IllegalStateException(
+                    "Google Sign-In OAuth mismatch for package ${activity.packageName}. Check that Google Cloud Console has an Android OAuth client matching this app's signing SHA-1 and a valid WEB_CLIENT_ID.",
+                    e
+                )
+            } else {
+                e
+            }
+            Result.failure(friendly)
         }
     }
 
