@@ -73,9 +73,23 @@ def fix_packages_and_imports():
 
 
 def fix_metadata_sync_mismatches():
+    # Error 1 & 2: YvGpsCamContainer.kt:65 & 66 -> No parameter with name 'isNetworkOnline' / 'syncStore' found.
+    # Also expose `val appContext: Context` on YvGpsCamContainer if missing.
     for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
         c_txt = open(c_path, encoding="utf-8").read()
         orig_c = c_txt
+
+        # Remove stale named arguments `isNetworkOnline = ...` and `syncStore = ...`
+        new_lines = []
+        for line in c_txt.splitlines():
+            if re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line):
+                continue
+            new_lines.append(line)
+        c_txt = "\n".join(new_lines) + "\n"
+        # Clean up trailing comma right before closing parenthesis `)` if `syncStore = ...` was the last argument
+        c_txt = re.sub(r',(\s*\))', r'\1', c_txt)
+
+        # Expose `val appContext` on YvGpsCamContainer
         m_c = re.search(r'(\bclass\s+YvGpsCamContainer\s*\()([^)]*)(\)\s*\{)', c_txt, re.S)
         if m_c and not re.search(r'\bval\s+appContext\b', c_txt):
             p_pre, p_args, p_suf = m_c.groups()
@@ -95,38 +109,32 @@ def fix_metadata_sync_mismatches():
         if c_txt != orig_c:
             open(c_path, "w", encoding="utf-8").write(c_txt)
 
-    for app_path in glob.glob("app/src/**/*Application.kt", recursive=True):
-        ap_txt = open(app_path, encoding="utf-8").read()
-        if "Application()" in ap_txt and "val appContext" not in ap_txt:
-            m_ap = re.search(r'(\bclass\s+[A-Za-z0-9_]+Application\s*:\s*Application\(\)\s*\{)', ap_txt)
-            if m_ap:
-                ap_txt = (
-                    ap_txt[:m_ap.end()]
-                    + "\n    val appContext: android.content.Context get() = applicationContext\n"
-                    + ap_txt[m_ap.end():]
-                )
-                open(app_path, "w", encoding="utf-8").write(ap_txt)
-
+    # Error 4: LocationMetadataSyncWorker.kt:44:88 -> Unresolved reference 'appContext'.
+    # Notice column 88! That means line 44 has something like `...container.appContext` or `...app.appContext` or `...something.appContext`!
+    # Let's inspect line 44 and replace `.appContext` with `.applicationContext` (or `applicationContext`) safely!
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
-        m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', w_txt, re.S)
-        if m_cls:
-            prefix, ctor_params, suffix = m_cls.groups()
-            if re.search(r'\bappContext\s*:', ctor_params):
-                if not re.search(r'\b(?:val|var)\s+appContext\s*:', ctor_params):
-                    ctor_params = re.sub(r'\b(appContext\s*:\s*(?:android\.content\.)?Context)', r'private val \1', ctor_params, count=1)
-                    w_txt = w_txt[:m_cls.start()] + prefix + ctor_params + suffix + w_txt[m_cls.end():]
-            else:
-                m_cparam = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', ctor_params)
-                cparam = m_cparam.group(1) if m_cparam else "applicationContext"
-                body_after = w_txt[m_cls.end():]
-                if not re.search(r'\b(?:val|var)\s+appContext\b', body_after.split("companion object")[0]):
-                    w_txt = w_txt[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after
+        lines = w_txt.splitlines()
+        for i, l in enumerate(lines):
+            if "appContext" in l and ("container.appContext" in l or ").appContext" in l or ".appContext" in l):
+                # Inside a CoroutineWorker, `applicationContext` is built-in!
+                # Replace `<anything>.appContext` on that expression with `applicationContext`
+                lines[i] = re.sub(r'(?:\([^)]+\)|[A-Za-z0-9_]+)(?:\.[A-Za-z0-9_]+)*\.appContext\b', 'applicationContext', l)
+        w_txt = "\n".join(lines) + "\n"
+        if w_txt != orig_w:
+            open(w_path, "w", encoding="utf-8").write(w_txt)
 
-        all_kt = glob.glob("app/src/**/*.kt", recursive=True)
-        has_sync_fn = any("fun requestMetadataSyncWhenConnected" in open(p, encoding="utf-8", errors="ignore").read() for p in all_kt)
-        if not has_sync_fn and "requestMetadataSyncWhenConnected" not in w_txt:
+    # Error 3: CameraViewModel.kt:304:25 -> Unresolved reference 'requestMetadataSyncWhenConnected'.
+    # Notice column 25! That means line 304 is calling a method on an object at col 25: e.g. `someRepo.requestMetadataSyncWhenConnected(...)` or `container.requestMetadataSyncWhenConnected(...)`!
+    # Look at CameraViewModel.kt around line 304 to find the receiver object type/name, OR replace `.<receiver>.requestMetadataSyncWhenConnected(...)` with `LocationMetadataSyncWorker.requestMetadataSyncWhenConnected(...)`!
+    worker_pkg = "`in`.yourview.yvgpscam.work"
+    for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
+        w_txt = open(w_path, encoding="utf-8").read()
+        m_wpkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', w_txt, re.M)
+        if m_wpkg:
+            worker_pkg = m_wpkg.group(1)
+        if "fun requestMetadataSyncWhenConnected" not in w_txt:
             helper_body = """
         fun requestMetadataSyncWhenConnected(context: android.content.Context) {
             val constraints = androidx.work.Constraints.Builder()
@@ -144,9 +152,41 @@ def fix_metadata_sync_mismatches():
                 idx = w_txt.rfind("}")
                 if idx != -1:
                     w_txt = w_txt[:idx] + f"\n    companion object {{{helper_body}\n    }}\n}}\n"
-
-        if w_txt != orig_w:
             open(w_path, "w", encoding="utf-8").write(w_txt)
+
+    for vm_path in glob.glob("app/src/**/CameraViewModel.kt", recursive=True):
+        vm_txt = open(vm_path, encoding="utf-8").read()
+        orig_vm = vm_txt
+        lines = vm_txt.splitlines()
+        for i, l in enumerate(lines):
+            if "requestMetadataSyncWhenConnected" in l:
+                # Case A: `receiver.requestMetadataSyncWhenConnected(ctx)` -> `LocationMetadataSyncWorker.requestMetadataSyncWhenConnected(ctx)`
+                # Case B: `receiver.requestMetadataSyncWhenConnected()` (0 args) -> `LocationMetadataSyncWorker.requestMetadataSyncWhenConnected(getApplication())` or `appContext`
+                m_call = re.search(r'([A-Za-z0-9_.]+)\.requestMetadataSyncWhenConnected\s*\(([^)]*)\)', l)
+                if m_call:
+                    args = m_call.group(2).strip()
+                    if not args:
+                        # Find a Context property in CameraViewModel (like application, appContext, context)
+                        ctx_expr = "getApplication()" if "AndroidViewModel" in vm_txt else (
+                            "appContext" if re.search(r'\bappContext\b', vm_txt) else (
+                                "context" if re.search(r'\bcontext\b', vm_txt) else "applicationContext"
+                            )
+                        )
+                        args = ctx_expr
+                    lines[i] = l[:m_call.start()] + f"{worker_pkg}.LocationMetadataSyncWorker.requestMetadataSyncWhenConnected({args})" + l[m_call.end():]
+                else:
+                    # Bare `requestMetadataSyncWhenConnected(...)`
+                    m_bare = re.search(r'\brequestMetadataSyncWhenConnected\s*\(([^)]*)\)', l)
+                    if m_bare:
+                        args = m_bare.group(1).strip()
+                        if not args:
+                            args = "getApplication()" if "AndroidViewModel" in vm_txt else (
+                                "appContext" if re.search(r'\bappContext\b', vm_txt) else "context"
+                            )
+                        lines[i] = l[:m_bare.start()] + f"{worker_pkg}.LocationMetadataSyncWorker.requestMetadataSyncWhenConnected({args})" + l[m_bare.end():]
+        vm_txt = "\n".join(lines) + "\n"
+        if vm_txt != orig_vm:
+            open(vm_path, "w", encoding="utf-8").write(vm_txt)
 
 
 def inject_keys_and_google_maps():
