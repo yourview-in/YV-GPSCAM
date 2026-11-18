@@ -73,79 +73,122 @@ def fix_packages_and_imports():
 
 
 def fix_metadata_sync_mismatches():
-    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext'
-    # Handles class-level property initializers (e.g. `private val repo = ...(appContext)`),
-    # constructor parameters (`context: Context` vs `appContext: Context`),
-    # single-expression functions, and companion objects!
+    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext' at column 88!
+    # WHY ALL PREVIOUS REGEXES MISSED IT:
+    # Column 88 is a NAMED ARGUMENT (`appContext = ...`)!
+    # e.g. `OnlineReverseGeocoder(appContext = context)` or `PhotoRepository(appContext = appContext)`
+    # where the target constructor's parameter is NOT named `appContext` (e.g. `context: Context`)!
+    # In Kotlin, `Foo(appContext = x)` throws `Unresolved reference 'appContext'` (or `No parameter with name 'appContext'` in K1, `Unresolved reference` in K2 / Gradle 9)!
+    # ALSO handle value-side `appContext` in ALL scopes (top-level functions, companion object, class body)!
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
-        print(f"=== LocationMetadataSyncWorker.kt BEFORE ===")
+        print("=== LocationMetadataSyncWorker.kt BEFORE ===")
         for idx, l in enumerate(w_txt.splitlines(), 1):
             print(f"{idx:02d}: {l}")
 
-        # Split class part vs companion object part
-        comp_match = re.search(r'^\s*companion\s+object\b', w_txt, re.M)
-        if comp_match:
-            cls_part = w_txt[:comp_match.start()]
-            comp_part = w_txt[comp_match.start():]
-        else:
-            cls_part = w_txt
-            comp_part = ""
+        # Step A: Strip named argument prefix `appContext = ` -> positional argument!
+        # In Kotlin 2.x (K2 compiler), passing an unknown named parameter `Foo(appContext = ...)` reports:
+        # `Unresolved reference 'appContext'` right at the `appContext =` column!
+        w_txt = re.sub(r'\bappContext\s*=\s*(?!=)', '', w_txt)
 
-        # Inspect class constructor:
-        m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', cls_part, re.S)
+        # Step B: Ensure `appContext` value is ALSO valid everywhere in the file!
+        # Split file into top-level / class / companion sections by tracking brace depth & declarations
+        m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', w_txt, re.S)
         if m_cls:
             prefix, ctor_params, suffix = m_cls.groups()
             if re.search(r'\bappContext\s*:', ctor_params):
-                # Ensure `private val appContext: Context`
                 if not re.search(r'\b(?:val|var)\s+appContext\s*:', ctor_params):
                     ctor_params = re.sub(r'\b(appContext\s*:\s*(?:android\.content\.)?Context)', r'private val \1', ctor_params, count=1)
-                    cls_part = cls_part[:m_cls.start()] + prefix + ctor_params + suffix + cls_part[m_cls.end():]
+                    w_txt = w_txt[:m_cls.start()] + prefix + ctor_params + suffix + w_txt[m_cls.end():]
             else:
-                # Constructor parameter is named something else (e.g. `context: Context`)!
-                # Inject `private val appContext = <cparam>.applicationContext` as the VERY FIRST line of the class body
-                # so ANY property initializer at line 44 (`val x = ...(appContext)`) OR method has `appContext` in scope!
                 m_cparam = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', ctor_params)
                 cparam = m_cparam.group(1) if m_cparam else "applicationContext"
-                body_after_brace = cls_part[m_cls.end():]
-                if not re.search(r'\b(?:val|var)\s+appContext\b', body_after_brace):
-                    cls_part = cls_part[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after_brace
+                body_after = w_txt[m_cls.end():]
+                if not re.search(r'\b(?:val|var)\s+appContext\b', body_after.split("companion object")[0]):
+                    w_txt = w_txt[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after
 
-        # Now handle companion object (if any `appContext` appears there without being declared)
-        if comp_part:
-            c_lines = comp_part.splitlines()
-            cur_ctx = "context"
-            local_app_ctx = False
-            for i, line in enumerate(c_lines):
-                if re.search(r'\bfun\s+[A-Za-z0-9_]+\s*\(', line):
-                    sig_chunk = " ".join(c_lines[i:min(i + 6, len(c_lines))])
-                    m_sig = re.search(r'\bfun\s+[A-Za-z0-9_]+\s*\(([^)]*)\)', sig_chunk)
-                    local_app_ctx = False
-                    if m_sig:
-                        p_str = m_sig.group(1)
-                        if re.search(r'\bappContext\s*:', p_str):
-                            local_app_ctx = True
-                        else:
-                            mc = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', p_str)
-                            if mc:
-                                cur_ctx = mc.group(1)
-                if re.search(r'\b(?:val|var)\s+appContext\b', line):
-                    local_app_ctx = True
-                    continue
-                if re.search(r'\bappContext\s*:', line):
-                    continue
-                if re.search(r'\bappContext\b', line) and not local_app_ctx:
-                    c_lines[i] = re.sub(r'\bappContext\b', f'{cur_ctx}.applicationContext', line)
-            comp_part = "\n".join(c_lines) + "\n"
+        # Step C: Check every `fun ...(...)` across the ENTIRE file (companion object AND top-level functions outside class!)
+        # If a static / top-level function (not inside class instance, or inside companion object) uses `appContext`
+        # without having `appContext` parameter or local `val appContext`, replace `appContext` with `<ctx_param>.applicationContext`!
+        comp_pos = w_txt.find("companion object")
+        # Also find end of LocationMetadataSyncWorker class to catch top-level functions after the class!
+        cls_start = w_txt.find("class LocationMetadataSyncWorker")
+        cls_end = len(w_txt)
+        if cls_start != -1:
+            b_open = w_txt.find("{", cls_start)
+            if b_open != -1:
+                depth = 1
+                k = b_open + 1
+                while k < len(w_txt) and depth > 0:
+                    if w_txt[k] == "{":
+                        depth += 1
+                    elif w_txt[k] == "}":
+                        depth -= 1
+                    k += 1
+                cls_end = k
 
-        w_txt = cls_part + comp_part
+        def fix_non_instance_chunk(chunk):
+            if not chunk or "appContext" not in chunk:
+                return chunk
+            fn_pat = re.compile(r'(\bfun\s+(?:[A-Za-z0-9_<>]+\.)?[A-Za-z0-9_]+\s*\(([^)]*)\))', re.S)
+            lines = chunk.splitlines()
+            full = "\n".join(lines)
+            # Replace per function block or expression function
+            out = []
+            pos = 0
+            while pos < len(full):
+                mf = fn_pat.search(full, pos)
+                if not mf:
+                    out.append(full[pos:])
+                    break
+                out.append(full[pos:mf.end()])
+                p_str = mf.group(2)
+                m_ctx = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', p_str)
+                has_app_param = bool(re.search(r'\bappContext\s*:', p_str))
+                # Determine end of this function (brace block or until next `fun `)
+                rest_after_sig = full[mf.end():]
+                m_brace = re.match(r'^\s*(?::\s*[^{=]+)?\{', rest_after_sig)
+                if m_brace:
+                    b_start = mf.end() + m_brace.end() - 1
+                    d = 1
+                    p2 = b_start + 1
+                    while p2 < len(full) and d > 0:
+                        if full[p2] == "{":
+                            d += 1
+                        elif full[p2] == "}":
+                            d -= 1
+                        p2 += 1
+                    fn_body = full[mf.end():p2]
+                    next_pos = p2
+                else:
+                    nxt = fn_pat.search(full, mf.end())
+                    next_pos = nxt.start() if nxt else len(full)
+                    fn_body = full[mf.end():next_pos]
 
-        if w_txt != orig_w:
-            open(w_path, "w", encoding="utf-8").write(w_txt)
-            print(f"=== LocationMetadataSyncWorker.kt AFTER ===")
-            for idx, l in enumerate(w_txt.splitlines(), 1):
-                print(f"{idx:02d}: {l}")
+                if not has_app_param and not re.search(r'\b(?:val|var)\s+appContext\b', fn_body):
+                    if m_ctx:
+                        fn_body = re.sub(r'\bappContext\b', f'{m_ctx.group(1)}.applicationContext', fn_body)
+                    elif "this" in mf.group(1) or "Context." in mf.group(1):
+                        fn_body = re.sub(r'\bappContext\b', 'this.applicationContext', fn_body)
+                out.append(fn_body)
+                pos = next_pos
+            return "".join(out)
+
+        if comp_pos != -1 and comp_pos < cls_end:
+            part1 = w_txt[:comp_pos]
+            part2 = fix_non_instance_chunk(w_txt[comp_pos:cls_end])
+            part3 = fix_non_instance_chunk(w_txt[cls_end:])
+            w_txt = part1 + part2 + part3
+        else:
+            part1 = w_txt[:cls_end]
+            part3 = fix_non_instance_chunk(w_txt[cls_end:])
+            w_txt = part1 + part3
+
+        open(w_path, "w", encoding="utf-8").write(w_txt)
+        print("=== LocationMetadataSyncWorker.kt AFTER ===")
+        for idx, l in enumerate(w_txt.splitlines(), 1):
+            print(f"{idx:02d}: {l}")
 
     # Fix 2: YvGpsCamContainer.kt -> No parameter with name 'isNetworkOnline' / 'syncStore'
     for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
