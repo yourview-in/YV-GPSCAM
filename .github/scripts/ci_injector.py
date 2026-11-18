@@ -74,12 +74,9 @@ def fix_packages_and_imports():
 
 def fix_metadata_sync_mismatches():
     # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext'
-    # Why line 40 succeeded earlier and line 44 failed:
-    # Line 40 was `val appContext = context.applicationContext` (or parameter `appContext: Context`)!
-    # When v8 blindly replaced `appContext` -> `applicationContext`, it broke line 40 AND line 44 because
-    # lines 40 & 44 are inside a companion object / static function (NOT inside CoroutineWorker instance methods)!
-    # Solution: Keep `appContext` intact, inspect the enclosing function / class constructor, and ensure `appContext`
-    # is ALWAYS defined in whichever scope line 44 sits in!
+    # Handles class-level property initializers (e.g. `private val repo = ...(appContext)`),
+    # constructor parameters (`context: Context` vs `appContext: Context`),
+    # single-expression functions, and companion objects!
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
@@ -87,61 +84,62 @@ def fix_metadata_sync_mismatches():
         for idx, l in enumerate(w_txt.splitlines(), 1):
             print(f"{idx:02d}: {l}")
 
-        # Case A: If constructor has `appContext: Context` without `val`/`var`, make it `private val appContext: Context`
-        #         Notice multi-line constructor support using re.S!
-        w_txt = re.sub(
-            r'(\bclass\s+LocationMetadataSyncWorker\s*\([^)]*?)(?<!val\s)(?<!var\s)\b(appContext\s*:\s*(?:android\.content\.)?Context)',
-            r'\1private val \2',
-            w_txt,
-            count=1,
-            flags=re.S
-        )
+        # Split class part vs companion object part
+        comp_match = re.search(r'^\s*companion\s+object\b', w_txt, re.M)
+        if comp_match:
+            cls_part = w_txt[:comp_match.start()]
+            comp_part = w_txt[comp_match.start():]
+        else:
+            cls_part = w_txt
+            comp_part = ""
 
-        # Case B: If constructor has `context: Context` (not `appContext`), add `private val appContext = context.applicationContext` inside class body
-        #         ONLY if `val appContext` is not already declared at class level!
-        m_cls = re.search(r'\bclass\s+LocationMetadataSyncWorker\s*\(([^)]*)\)\s*:\s*[^{]+\{', w_txt, re.S)
-        if m_cls and "appContext" not in m_cls.group(1):
-            m_cparam = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', m_cls.group(1))
-            cparam = m_cparam.group(1) if m_cparam else "applicationContext"
-            insert_pos = m_cls.end()
-            # Check if `appContext` is used before `companion object`
-            comp_idx = w_txt.find("companion object")
-            body_end = comp_idx if comp_idx != -1 else len(w_txt)
-            cls_body = w_txt[insert_pos:body_end]
-            if re.search(r'\bappContext\b', cls_body) and not re.search(r'\bval\s+appContext\b', cls_body):
-                w_txt = w_txt[:insert_pos] + f"\n    private val appContext = {cparam}.applicationContext\n" + w_txt[insert_pos:]
+        # Inspect class constructor:
+        m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', cls_part, re.S)
+        if m_cls:
+            prefix, ctor_params, suffix = m_cls.groups()
+            if re.search(r'\bappContext\s*:', ctor_params):
+                # Ensure `private val appContext: Context`
+                if not re.search(r'\b(?:val|var)\s+appContext\s*:', ctor_params):
+                    ctor_params = re.sub(r'\b(appContext\s*:\s*(?:android\.content\.)?Context)', r'private val \1', ctor_params, count=1)
+                    cls_part = cls_part[:m_cls.start()] + prefix + ctor_params + suffix + cls_part[m_cls.end():]
+            else:
+                # Constructor parameter is named something else (e.g. `context: Context`)!
+                # Inject `private val appContext = <cparam>.applicationContext` as the VERY FIRST line of the class body
+                # so ANY property initializer at line 44 (`val x = ...(appContext)`) OR method has `appContext` in scope!
+                m_cparam = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', ctor_params)
+                cparam = m_cparam.group(1) if m_cparam else "applicationContext"
+                body_after_brace = cls_part[m_cls.end():]
+                if not re.search(r'\b(?:val|var)\s+appContext\b', body_after_brace):
+                    cls_part = cls_part[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after_brace
 
-        # Case C: Check every `fun ...(...)` in companion object or file (multiline params supported!)
-        # If a function body uses `appContext` without declaring `val appContext` or having parameter `appContext`,
-        # replace `appContext` in THAT function body with `<ctx_param>.applicationContext` (if it takes a Context param)!
-        fn_pattern = re.compile(r'(\bfun\s+[A-Za-z0-9_]+\s*\(([^)]*)\)(?:\s*:\s*[^{=]+)?\s*\{)', re.S)
-        pos = 0
-        out = []
-        while pos < len(w_txt):
-            m_fn = fn_pattern.search(w_txt, pos)
-            if not m_fn:
-                out.append(w_txt[pos:])
-                break
-            out.append(w_txt[pos:m_fn.end()])
-            params_str = m_fn.group(2)
-            # Find matching closing brace of this function
-            brace_depth = 1
-            j = m_fn.end()
-            while j < len(w_txt) and brace_depth > 0:
-                if w_txt[j] == "{":
-                    brace_depth += 1
-                elif w_txt[j] == "}":
-                    brace_depth -= 1
-                j += 1
-            fn_body = w_txt[m_fn.end():j]
-            if re.search(r'\bappContext\b', fn_body) and not re.search(r'\b(?:val|var)\s+appContext\b', fn_body) and not re.search(r'\bappContext\s*:', params_str):
-                m_ctx = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', params_str)
-                if m_ctx:
-                    ctx_p = m_ctx.group(1)
-                    fn_body = re.sub(r'\bappContext\b', f'{ctx_p}.applicationContext', fn_body)
-            out.append(fn_body)
-            pos = j
-        w_txt = "".join(out)
+        # Now handle companion object (if any `appContext` appears there without being declared)
+        if comp_part:
+            c_lines = comp_part.splitlines()
+            cur_ctx = "context"
+            local_app_ctx = False
+            for i, line in enumerate(c_lines):
+                if re.search(r'\bfun\s+[A-Za-z0-9_]+\s*\(', line):
+                    sig_chunk = " ".join(c_lines[i:min(i + 6, len(c_lines))])
+                    m_sig = re.search(r'\bfun\s+[A-Za-z0-9_]+\s*\(([^)]*)\)', sig_chunk)
+                    local_app_ctx = False
+                    if m_sig:
+                        p_str = m_sig.group(1)
+                        if re.search(r'\bappContext\s*:', p_str):
+                            local_app_ctx = True
+                        else:
+                            mc = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', p_str)
+                            if mc:
+                                cur_ctx = mc.group(1)
+                if re.search(r'\b(?:val|var)\s+appContext\b', line):
+                    local_app_ctx = True
+                    continue
+                if re.search(r'\bappContext\s*:', line):
+                    continue
+                if re.search(r'\bappContext\b', line) and not local_app_ctx:
+                    c_lines[i] = re.sub(r'\bappContext\b', f'{cur_ctx}.applicationContext', line)
+            comp_part = "\n".join(c_lines) + "\n"
+
+        w_txt = cls_part + comp_part
 
         if w_txt != orig_w:
             open(w_path, "w", encoding="utf-8").write(w_txt)
