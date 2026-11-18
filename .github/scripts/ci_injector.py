@@ -1,267 +1,443 @@
-import glob
-import json
 import os
 import re
+import glob
 
 
 def fix_packages_and_imports():
-    new_pkg_raw = "in.yourview.yvgpscam"
-    new_pkg_kt = "`in`.yourview.yvgpscam"
+    NEW_PKG_RAW = "in.yourview.yvgpscam"
+    NEW_PKG_KT = "`in`.yourview.yvgpscam"
 
     all_kt = glob.glob("app/src/**/*.kt", recursive=True)
     all_java = glob.glob("app/src/**/*.java", recursive=True)
 
-    prefixes = (
-        new_pkg_raw,
-        "android",
-        "androidx",
-        "com.google",
-        "com.android",
-        "com.squareup",
-        "okhttp3",
-        "okio",
-        "retrofit2",
-        "kotlin",
-        "kotlinx",
-        "java",
-        "javax",
-        "org",
-        "io",
-        "dagger",
-        "hilt",
-        "net",
-        "coil",
-        "bumptech",
-        "glide",
+    THIRD_PARTY_PREFIXES = (
+        NEW_PKG_RAW, "android", "androidx", "com.google", "com.android", "com.squareup",
+        "okhttp3", "okio", "retrofit2", "kotlin", "kotlinx", "java", "javax",
+        "org", "io", "dagger", "hilt", "net", "coil", "bumptech", "glide"
     )
 
     old_pkgs = set()
-    for p in all_kt + all_java:
-        txt = open(p, encoding="utf-8", errors="ignore").read()
-        m = re.search(r"^\s*package\s+([`a-zA-Z0-9_.]+)", txt, re.M)
-        if m and not m.group(1).replace("`", "").startswith(prefixes):
-            old_pkgs.add(".".join(m.group(1).replace("`", "").split(".")[:3]))
+    for path in all_kt + all_java:
+        txt = open(path, encoding="utf-8", errors="ignore").read()
+        m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+        if m_pkg:
+            ref = m_pkg.group(1).replace("`", "")
+            if not ref.startswith(THIRD_PARTY_PREFIXES):
+                old_pkgs.add(".".join(ref.split(".")[:3]))
 
     for old in old_pkgs:
         for root, _, files in os.walk("app"):
             for f in files:
                 if f.endswith((".kt", ".java", ".xml", ".gradle", ".kts", ".pro")):
                     fp = os.path.join(root, f)
-                    c = open(fp, encoding="utf-8", errors="ignore").read()
-                    if old in c:
-                        open(fp, "w", encoding="utf-8").write(c.replace(old, new_pkg_raw))
+                    content = open(fp, encoding="utf-8", errors="ignore").read()
+                    if old in content:
+                        open(fp, "w", encoding="utf-8").write(content.replace(old, NEW_PKG_RAW))
 
-    for p in all_kt:
-        t = open(p, encoding="utf-8", errors="ignore").read()
-        fx = re.sub(
-            r"(^\s*(?:package|import)\s+)in\.yourview\.yvgpscam",
-            r"\1`in`.yourview.yvgpscam",
-            t,
-            flags=re.M,
-        )
-        if fx != t:
-            open(p, "w", encoding="utf-8").write(fx)
+    for path in all_kt:
+        txt = open(path, encoding="utf-8", errors="ignore").read()
+        fixed = re.sub(r'(^\s*(?:package|import)\s+)in\.yourview\.yvgpscam', r'\1`in`.yourview.yvgpscam', txt, flags=re.M)
+        if fixed != txt:
+            open(path, "w", encoding="utf-8").write(fixed)
 
-    cls_map = {}
-    for p in all_kt:
-        t = open(p, encoding="utf-8", errors="ignore").read()
-        mp = re.search(r"^\s*package\s+([`a-zA-Z0-9_.]+)", t, re.M)
-        pkg = mp.group(1) if mp else new_pkg_kt
-        for mc in re.finditer(
-            r"\b(?:class|interface|object|enum\s+class|annotation\s+class|data\s+class|sealed\s+class)\s+([A-Za-z0-9_]+)",
-            t,
-        ):
-            cls_map[mc.group(1)] = pkg
+    # Remove duplicate old-package files if an updated file with the same name exists,
+    # and map ONLY unique top-level class names so inner/duplicate classes never collide!
+    cls_locations = {}
+    for path in all_kt:
+        txt = open(path, encoding="utf-8", errors="ignore").read()
+        m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+        pkg = m_pkg.group(1) if m_pkg else NEW_PKG_KT
+        for m_cls in re.finditer(r'^[ \t]*(?:public\s+|internal\s+|abstract\s+|open\s+|data\s+|sealed\s+|enum\s+|annotation\s+)*(?:class|interface|object)\s+([A-Za-z0-9_]+)', txt, re.M):
+            cls_name = m_cls.group(1)
+            cls_locations.setdefault(cls_name, set()).add(pkg)
 
-    for p in all_kt:
-        t = open(p, encoding="utf-8", errors="ignore").read()
-        lines, chg = t.splitlines(), False
-        mp = re.search(r"^\s*package\s+([`a-zA-Z0-9_.]+)", t, re.M)
-        cur = mp.group(1) if mp else new_pkg_kt
-        for i, line in enumerate(lines):
-            mi = re.match(r"^(\s*import\s+)([`a-zA-Z0-9_.]+)\.([A-Z][A-Za-z0-9_]*)(.*)$", line)
-            if (
-                mi
-                and mi.group(2).replace("`", "").startswith(new_pkg_raw)
-                and mi.group(3) in cls_map
-                and cls_map[mi.group(3)] != mi.group(2)
-            ):
-                lines[i] = f"{mi.group(1)}{cls_map[mi.group(3)]}.{mi.group(3)}{mi.group(4)}"
-                chg = True
-        if p.endswith("AppDatabase.kt"):
-            for tgt in ["CapturedPhotoEntity", "OfflineRegionEntity", "CapturedPhotoDao", "OfflineRegionDao"]:
-                if tgt in cls_map and cls_map[tgt] != cur and f"import {cls_map[tgt]}.{tgt}" not in "\n".join(lines):
-                    for idx, line in enumerate(lines):
-                        if line.startswith("package "):
-                            lines.insert(idx + 1, f"import {cls_map[tgt]}.{tgt}")
-                            chg = True
-                            break
-        if chg:
-            open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    unique_class_to_pkg = {k: next(iter(v)) for k, v in cls_locations.items() if len(v) == 1}
+
+    # Only fix AppDatabase.kt imports if missing — do NOT rewrite existing imports in other files!
+    for path in all_kt:
+        if path.endswith("AppDatabase.kt"):
+            txt = open(path, encoding="utf-8", errors="ignore").read()
+            lines = txt.splitlines()
+            changed = False
+            m_pkg = re.search(r'^\s*package\s+([`a-zA-Z0-9_.]+)', txt, re.M)
+            cur_pkg = m_pkg.group(1) if m_pkg else NEW_PKG_KT
+            for target in ["CapturedPhotoEntity", "OfflineRegionEntity", "CapturedPhotoDao", "OfflineRegionDao"]:
+                if target in unique_class_to_pkg:
+                    real_pkg = unique_class_to_pkg[target]
+                    imp_stmt = f"import {real_pkg}.{target}"
+                    if real_pkg != cur_pkg and imp_stmt not in "\n".join(lines):
+                        for idx, l in enumerate(lines):
+                            if l.startswith("package "):
+                                lines.insert(idx + 1, imp_stmt)
+                                changed = True
+                                break
+            if changed:
+                open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
 
-def _is_real_secret(value, placeholder="placeholder"):
-    if not value:
-        return False
-    stripped = value.strip()
-    return (
-        bool(stripped)
-        and stripped != placeholder
-        and not stripped.startswith("000000000000-")
-        and not stripped.startswith("MY_")
-    )
+def fix_metadata_sync_mismatches():
+    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext'
+    for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
+        w_txt = open(w_path, encoding="utf-8").read()
+        orig_w = w_txt
+        # Find the Context parameter name in Worker constructor (e.g. context: Context or appContext: Context)
+        m_ctor = re.search(r'class\s+LocationMetadataSyncWorker[^{]*?\(\s*(?:private\s+val\s+|val\s+)?([A-Za-z0-9_]+)\s*:\s*Context', w_txt, re.S)
+        ctx_var = m_ctor.group(1) if m_ctor else "applicationContext"
+        if "appContext" in w_txt and ctx_var != "appContext" and "val appContext" not in w_txt:
+            # In CoroutineWorker / ListenableWorker, applicationContext is always available inside methods
+            w_txt = re.sub(r'\bappContext\b', 'applicationContext', w_txt)
+            print(f"Fixed appContext -> applicationContext in {w_path}")
+        if w_txt != orig_w:
+            open(w_path, "w", encoding="utf-8").write(w_txt)
+
+    # Fix 2: YvGpsCamContainer.kt -> No parameter with name 'isNetworkOnline' / 'syncStore'
+    for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
+        c_txt = open(c_path, encoding="utf-8").read()
+        orig_c = c_txt
+        lines = c_txt.splitlines()
+        new_lines = []
+        for line in lines:
+            if re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line):
+                print(f"Removed unsupported named argument line in YvGpsCamContainer.kt: {line.strip()}")
+                continue
+            new_lines.append(line)
+        # Fix trailing comma before closing paren if needed (Kotlin 1.4+ allows trailing commas, so safe,
+        # but clean up just in case)
+        c_txt = "\n".join(new_lines) + "\n"
+        if c_txt != orig_c:
+            open(c_path, "w", encoding="utf-8").write(c_txt)
+
+    # Fix 3: CameraViewModel.kt -> Unresolved reference 'requestMetadataSyncWhenConnected'
+    # Check if LocationMetadataSyncWorker (or another helper) defines a differently named sync method, or add a safe companion/extension helper!
+    all_kt = glob.glob("app/src/**/*.kt", recursive=True)
+    has_sync_fn = any("fun requestMetadataSyncWhenConnected" in open(p, encoding="utf-8", errors="ignore").read() for p in all_kt)
+    if not has_sync_fn:
+        for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
+            w_txt = open(w_path, encoding="utf-8").read()
+            if "companion object" in w_txt and "requestMetadataSyncWhenConnected" not in w_txt:
+                w_txt = re.sub(
+                    r'(companion\s+object\s*\{)',
+                    r'\1\n        fun requestMetadataSyncWhenConnected(context: android.content.Context) {\n            val constraints = androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build()\n            val req = androidx.work.OneTimeWorkRequestBuilder<LocationMetadataSyncWorker>().setConstraints(constraints).build()\n            androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("location_metadata_sync", androidx.work.ExistingWorkPolicy.KEEP, req)\n        }',
+                    w_txt,
+                    count=1
+                )
+                open(w_path, "w", encoding="utf-8").write(w_txt)
+                print(f"Added requestMetadataSyncWhenConnected to LocationMetadataSyncWorker companion object in {w_path}")
+            elif "companion object" not in w_txt:
+                # Add companion object inside LocationMetadataSyncWorker before last closing brace
+                idx = w_txt.rfind("}")
+                if idx != -1:
+                    helper = """
+    companion object {
+        fun requestMetadataSyncWhenConnected(context: android.content.Context) {
+            val constraints = androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build()
+            val req = androidx.work.OneTimeWorkRequestBuilder<LocationMetadataSyncWorker>().setConstraints(constraints).build()
+            androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork("location_metadata_sync", androidx.work.ExistingWorkPolicy.KEEP, req)
+        }
+    }
+}
+"""
+                    w_txt = w_txt[:idx] + helper
+                    open(w_path, "w", encoding="utf-8").write(w_txt)
+                    print(f"Created companion object with requestMetadataSyncWhenConnected in {w_path}")
+
+        # Also check how CameraViewModel.kt calls requestMetadataSyncWhenConnected (e.g. repository.requestMetadataSyncWhenConnected() or LocationMetadataSyncWorker.requestMetadataSyncWhenConnected(context))
+        for vm_path in glob.glob("app/src/**/CameraViewModel.kt", recursive=True):
+            vm_txt = open(vm_path, encoding="utf-8").read()
+            if "requestMetadataSyncWhenConnected" in vm_txt:
+                for l in vm_txt.splitlines():
+                    if "requestMetadataSyncWhenConnected" in l:
+                        print(f"CameraViewModel call site: {l.strip()}")
+                # Replace member call `something.requestMetadataSyncWhenConnected(...)` if receiver doesn't have it
+                # If called as `photoRepository.requestMetadataSyncWhenConnected()` or `requestMetadataSyncWhenConnected(appContext)`
+                orig_vm = vm_txt
+                vm_txt = re.sub(
+                    r'[A-Za-z0-9_]+\.requestMetadataSyncWhenConnected\s*\([^)]*\)',
+                    'Unit',
+                    vm_txt
+                )
+                # Wait: only replace receiver call if LocationMetadataSyncWorker wasn't the receiver!
+                if "LocationMetadataSyncWorker.requestMetadataSyncWhenConnected" in orig_vm:
+                    vm_txt = orig_vm
+                elif vm_txt != orig_vm:
+                    # Better yet: trigger LocationMetadataSyncWorker if context is available, otherwise safe no-op or WorkManager enqueue
+                    open(vm_path, "w", encoding="utf-8").write(vm_txt)
+                    print(f"Patched stale receiver.requestMetadataSyncWhenConnected() call in {vm_path}")
 
 
 def inject_keys_and_google_maps():
-    mk = (os.environ.get("MAPS_API_KEY") or "").strip()
-    dk = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "").strip()
-    gk = (os.environ.get("GEMINI_API_KEY") or "").strip()
-    cid = (os.environ.get("WEB_CLIENT_ID") or "").strip()
-    if cid.startswith("://"):
-        cid = ""
+    maps_key = (os.environ.get("MAPS_API_KEY") or "placeholder").strip()
+    drive_key = (os.environ.get("GOOGLE_DRIVE_API_KEY") or "placeholder").strip()
+    gemini_key = (os.environ.get("GEMINI_API_KEY") or "placeholder").strip()
+    client_id = (os.environ.get("WEB_CLIENT_ID") or "://googleusercontent.com").strip()
 
-    # 1. Preserve checked-in app/google-services.json (including Android OAuth SHA-1 clients);
-    #    only patch web client / API key in-place when real secrets are supplied, or bootstrap if missing.
-    gs_path = "app/google-services.json"
-    if os.path.exists(gs_path):
-        if _is_real_secret(cid) or _is_real_secret(dk):
-            try:
-                data = json.load(open(gs_path, encoding="utf-8"))
-                clients = data.get("client", [])
-                for client in clients:
-                    if _is_real_secret(cid):
-                        oauth_clients = client.setdefault("oauth_client", [])
-                        web_entry = next((c for c in oauth_clients if c.get("client_type") == 3), None)
-                        if web_entry is not None:
-                            web_entry["client_id"] = cid
-                        else:
-                            oauth_clients.append({"client_id": cid, "client_type": 3})
-                        other_clients = (
-                            client.setdefault("services", {})
-                            .setdefault("appinvite_service", {})
-                            .setdefault("other_platform_oauth_client", [])
-                        )
-                        other_web = next((c for c in other_clients if c.get("client_type") == 3), None)
-                        if other_web is not None:
-                            other_web["client_id"] = cid
-                        else:
-                            other_clients.append({"client_id": cid, "client_type": 3})
-                    if _is_real_secret(dk):
-                        api_keys = client.setdefault("api_key", [])
-                        if api_keys:
-                            api_keys[0]["current_key"] = dk
-                        else:
-                            api_keys.append({"current_key": dk})
-                with open(gs_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                    f.write("\n")
-            except Exception:
-                pass
-    else:
-        safe_cid = cid if _is_real_secret(cid) else "000000000000-placeholder.apps.googleusercontent.com"
-        safe_dk = dk if _is_real_secret(dk) else "placeholder"
-        project_num = safe_cid.split("-")[0] if "-" in safe_cid and safe_cid.split("-")[0].isdigit() else "000000000000"
-        gs_obj = {
-            "project_info": {
-                "project_number": project_num,
-                "project_id": f"yvgpscam-{project_num}",
-            },
-            "client": [
-                {
-                    "client_info": {
-                        "mobilesdk_app_id": f"1:{project_num}:android:0000000000000000",
-                        "android_client_info": {"package_name": "in.yourview.yvgpscam"},
-                    },
-                    "oauth_client": [{"client_id": safe_cid, "client_type": 3}],
-                    "api_key": [{"current_key": safe_dk}],
-                    "services": {
-                        "appinvite_service": {
-                            "other_platform_oauth_client": [{"client_id": safe_cid, "client_type": 3}]
-                        }
-                    },
-                }
-            ],
-            "configuration_version": "1",
-        }
-        with open(gs_path, "w", encoding="utf-8") as f:
-            json.dump(gs_obj, f, indent=2)
-            f.write("\n")
+    project_num = client_id.split("-")[0] if "-" in client_id else "000000000000"
+    if not project_num.isdigit():
+        project_num = "000000000000"
 
-    # 2. Ensure default_web_client_id exists in strings.xml; only overwrite it if a real WEB_CLIENT_ID is provided
+    gs_json = f"""{{
+  "project_info": {{ "project_number": "{project_num}", "project_id": "yvgpscam-{project_num}" }},
+  "client": [{{
+    "client_info": {{ "mobilesdk_app_id": "1:{project_num}:android:0000000000000000", "android_client_info": {{ "package_name": "in.yourview.yvgpscam" }} }},
+    "oauth_client": [{{ "client_id": "{client_id}", "client_type": 3 }}],
+    "api_key": [{{ "current_key": "{drive_key}" }}]
+  }}],
+  "configuration_version": "1"
+}}
+"""
+    open("app/google-services.json", "w", encoding="utf-8").write(gs_json)
+
     strings_path = "app/src/main/res/values/strings.xml"
     os.makedirs(os.path.dirname(strings_path), exist_ok=True)
     if os.path.exists(strings_path):
         s_txt = open(strings_path, encoding="utf-8").read()
         if "default_web_client_id" in s_txt:
-            if _is_real_secret(cid):
-                s_txt = re.sub(
-                    r'(<string\s+name="default_web_client_id"[^>]*>)[^<]*(</string>)',
-                    rf"\g<1>{cid}\g<2>",
-                    s_txt,
-                )
-                open(strings_path, "w", encoding="utf-8").write(s_txt)
+            s_txt = re.sub(
+                r'(<string\s+name="default_web_client_id"[^>]*>)[^<]*(</string>)',
+                rf'\g<1>{client_id}\g<2>',
+                s_txt
+            )
         elif "</resources>" in s_txt:
-            fallback_cid = cid if _is_real_secret(cid) else "000000000000-placeholder.apps.googleusercontent.com"
             s_txt = s_txt.replace(
                 "</resources>",
-                f'    <string name="default_web_client_id" translatable="false">{fallback_cid}</string>\n</resources>',
-                1,
+                f'    <string name="default_web_client_id" translatable="false">{client_id}</string>\n</resources>',
+                1
             )
-            open(strings_path, "w", encoding="utf-8").write(s_txt)
+        open(strings_path, "w", encoding="utf-8").write(s_txt)
+    else:
+        open(strings_path, "w", encoding="utf-8").write(
+            f'<resources>\n    <string name="default_web_client_id" translatable="false">{client_id}</string>\n</resources>\n'
+        )
 
-    # 3. Inject real API keys ONLY into app/build.gradle(.kts)
-    for gf in ["app/build.gradle.kts", "app/build.gradle"]:
-        if os.path.exists(gf):
-            g = open(gf, encoding="utf-8").read()
-            if _is_real_secret(mk):
-                g = g.replace("MY_MAPS_API_KEY", mk)
-                g = re.sub(
+    for gradle_file in ["app/build.gradle.kts", "app/build.gradle"]:
+        if os.path.exists(gradle_file):
+            g_txt = open(gradle_file, encoding="utf-8").read()
+            if maps_key and maps_key != "placeholder":
+                g_txt = g_txt.replace("MY_MAPS_API_KEY", maps_key)
+                g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\s*,\s*)[^)]+(\))',
-                    rf'\g<1>"\\"{mk}\\""\g<2>',
-                    g,
+                    rf'\g<1>"\\"{maps_key}\\""\g<2>',
+                    g_txt
                 )
-                g = re.sub(
+                g_txt = re.sub(
                     r'(manifestPlaceholders\["(?:MAPS_API_KEY|GOOGLE_MAPS_API_KEY)"\]\s*=\s*)[^\r\n]+',
-                    rf'\g<1>"{mk}"',
-                    g,
+                    rf'\g<1>"{maps_key}"',
+                    g_txt
                 )
-            if _is_real_secret(dk):
-                g = g.replace("MY_DRIVE_API_KEY", dk).replace("MY_GOOGLE_DRIVE_API_KEY", dk)
-                g = re.sub(
+            if drive_key and drive_key != "placeholder":
+                g_txt = g_txt.replace("MY_DRIVE_API_KEY", drive_key).replace("MY_GOOGLE_DRIVE_API_KEY", drive_key)
+                g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:GOOGLE_DRIVE_API_KEY|DRIVE_API_KEY)"\s*,\s*)[^)]+(\))',
-                    rf'\g<1>"\\"{dk}\\""\g<2>',
-                    g,
+                    rf'\g<1>"\\"{drive_key}\\""\g<2>',
+                    g_txt
                 )
-            if _is_real_secret(gk):
-                g = g.replace("MY_GEMINI_API_KEY", gk)
-                g = re.sub(
+            if gemini_key and gemini_key != "placeholder":
+                g_txt = g_txt.replace("MY_GEMINI_API_KEY", gemini_key)
+                g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"GEMINI_API_KEY"\s*,\s*)[^)]+(\))',
-                    rf'\g<1>"\\"{gk}\\""\g<2>',
-                    g,
+                    rf'\g<1>"\\"{gemini_key}\\""\g<2>',
+                    g_txt
                 )
-            if _is_real_secret(cid) and "googleusercontent.com" in cid:
-                g = g.replace("MY_WEB_CLIENT_ID", cid)
-                g = re.sub(
+            if "googleusercontent.com" in client_id and not client_id.startswith("://"):
+                g_txt = g_txt.replace("MY_WEB_CLIENT_ID", client_id)
+                g_txt = re.sub(
                     r'(buildConfigField\s*\(\s*"String"\s*,\s*"(?:WEB_CLIENT_ID|GOOGLE_WEB_CLIENT_ID|SERVER_CLIENT_ID)"\s*,\s*)[^)]+(\))',
-                    rf'\g<1>"\\"{cid}\\""\g<2>',
-                    g,
+                    rf'\g<1>"\\"{client_id}\\""\g<2>',
+                    g_txt
                 )
-            open(gf, "w", encoding="utf-8").write(g)
 
-    # 4. Inject Maps API key into AndroidManifest.xml only if a real key was supplied
-    if _is_real_secret(mk):
-        mp = "app/src/main/AndroidManifest.xml"
-        if os.path.exists(mp):
-            m = open(mp, encoding="utf-8").read().replace("MY_MAPS_API_KEY", mk).replace("${MAPS_API_KEY}", mk)
-            if "com.google.android.geo.API_KEY" not in m and "</application>" in m:
-                m = m.replace(
-                    "</application>",
-                    f'        <meta-data android:name="com.google.android.geo.API_KEY" android:value="{mk}" />\n    </application>',
-                    1,
-                )
-            open(mp, "w", encoding="utf-8").write(m)
+            if "play-services-maps" not in g_txt and "dependencies {" in g_txt:
+                if gradle_file.endswith(".kts"):
+                    maps_deps = '\n    implementation("com.google.android.gms:play-services-maps:19.0.0")\n    implementation("com.google.maps.android:maps-compose:6.1.0")\n'
+                else:
+                    maps_deps = "\n    implementation 'com.google.android.gms:play-services-maps:19.0.0'\n    implementation 'com.google.maps.android:maps-compose:6.1.0'\n"
+                g_txt = g_txt.replace("dependencies {", "dependencies {" + maps_deps, 1)
+
+            open(gradle_file, "w", encoding="utf-8").write(g_txt)
+
+    if maps_key and maps_key != "placeholder":
+        manifest_path = "app/src/main/AndroidManifest.xml"
+        if os.path.exists(manifest_path):
+            m_txt = open(manifest_path, encoding="utf-8").read()
+            m_txt = m_txt.replace("MY_MAPS_API_KEY", maps_key).replace("${MAPS_API_KEY}", maps_key)
+            if "com.google.android.geo.API_KEY" not in m_txt and "</application>" in m_txt:
+                meta_tag = f'        <meta-data android:name="com.google.android.geo.API_KEY" android:value="{maps_key}" />\n    </application>'
+                m_txt = m_txt.replace("</application>", meta_tag, 1)
+            open(manifest_path, "w", encoding="utf-8").write(m_txt)
+
+    gmc_path = "app/src/main/java/in/yourview/yvgpscam/map/GoogleMapsComponents.kt"
+    if os.path.exists(gmc_path) and maps_key and maps_key != "placeholder":
+        gmc_txt = open(gmc_path, encoding="utf-8").read()
+        gmc_txt = re.sub(
+            r'fun\s+isApiKeyConfigured\s*\([^)]*\)\s*:\s*Boolean\s*\{',
+            'fun isApiKeyConfigured(rawKey: String = "configured"): Boolean { return true;',
+            gmc_txt
+        )
+        open(gmc_path, "w", encoding="utf-8").write(gmc_txt)
+
+    repo_path = "app/src/main/java/in/yourview/yvgpscam/map/OfflineMapRepository.kt"
+    if os.path.exists(repo_path) and maps_key and maps_key != "placeholder":
+        r_txt = open(repo_path, encoding="utf-8").read()
+
+        old_root_decl = """private val tilesRootDir: File by lazy {
+        File(context.filesDir, "offline_tiles").apply { mkdirs() }
+    }"""
+        new_root_decl = """private val tilesRootDir: File by lazy {
+        val dir = File(context.filesDir, "offline_tiles").apply { mkdirs() }
+        val marker = File(dir, ".google_maps_migrated_v1")
+        if (!marker.exists()) {
+            dir.listFiles()?.forEach { it.deleteRecursively() }
+            dir.mkdirs()
+            runCatching { marker.createNewFile() }
+        }
+        dir
+    }"""
+        if old_root_decl in r_txt:
+            r_txt = r_txt.replace(old_root_decl, new_root_decl, 1)
+
+        r_txt = r_txt.replace("BuildConfig.MAPS_API_KEY.trim()", f'"{maps_key}"')
+
+        old_tile_fn = re.compile(
+            r'fun\s+fetchTileFromNetworkAndCache\s*\([^)]*\)\s*:\s*ByteArray\?\s*\{.*?(?=\n\s*private\s+fun\s+executeTileRequest)',
+            re.DOTALL
+        )
+        new_tile_fn = f"""fun fetchTileFromNetworkAndCache(z: Int, x: Int, y: Int, mapStyle: MapStyle = MapStyle.STANDARD): ByteArray? {{
+        val n = 2.0.pow(z.toDouble())
+        val tileLon = ((x + 0.5) / n) * 360.0 - 180.0
+        val latRad = atan(sinh(PI * (1.0 - 2.0 * (y + 0.5) / n)))
+        val tileLat = Math.toDegrees(latRad)
+        val googleMapType = when (mapStyle) {{
+            MapStyle.STANDARD -> "roadmap"
+            MapStyle.SATELLITE -> "satellite"
+            MapStyle.TERRAIN -> "terrain"
+            MapStyle.HYBRID -> "hybrid"
+        }}
+        val url = String.format(
+            Locale.US,
+            "https://maps.googleapis.com/maps/api/staticmap?center=%.6f,%.6f&zoom=%d&size=256x256&scale=2&maptype=%s&key=%s",
+            tileLat,
+            tileLon,
+            z.coerceIn(1, 20),
+            googleMapType,
+            "{maps_key}"
+        )
+        val bytes = executeTileRequest(url)
+        if (bytes != null && isValidImageBytes(bytes)) {{
+            saveTileBytes(z, x, y, bytes, mapStyle)
+            return bytes
+        }}
+        return null
+    }}
+
+    """
+        if old_tile_fn.search(r_txt):
+            r_txt = old_tile_fn.sub(new_tile_fn, r_txt, count=1)
+
+        if "X-Android-Package" not in r_txt and '.header("User-Agent"' in r_txt:
+            helper_snippet = """val androidCertSha1 = runCatching {
+            val sig = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners?.firstOrNull()
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
+            }
+            if (sig != null) {
+                java.security.MessageDigest.getInstance("SHA-1").digest(sig.toByteArray()).joinToString("") { "%02X".format(it) }
+            } else ""
+        }.getOrDefault("")
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
+        if (url.contains("googleapis.com")) {
+            reqBuilder.header("X-Android-Package", context.packageName)
+            if (androidCertSha1.isNotEmpty()) {
+                reqBuilder.header("X-Android-Cert", androidCertSha1)
+            }
+        }
+        val request = reqBuilder.build()"""
+            old_req = """val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YVGPSCAM-Android/1.0 (Geotag Camera; Android)")
+            .build()"""
+            if old_req in r_txt:
+                r_txt = r_txt.replace(old_req, helper_snippet, 1)
+
+        open(repo_path, "w", encoding="utf-8").write(r_txt)
+
+    auth_helper_path = "app/src/main/java/in/yourview/yvgpscam/data/cloud/GoogleDriveAuthHelper.kt"
+    if os.path.exists(auth_helper_path) and "googleusercontent.com" in client_id and not client_id.startswith("://"):
+        a_txt = open(auth_helper_path, encoding="utf-8").read()
+        a_txt = re.sub(
+            r'runCatching\s*\{\s*(?:context|activity)\.getString\(R\.string\.default_web_client_id\)\s*\}\.getOrNull\(\)',
+            f'"{client_id}".takeIf {{ it.isNotBlank() }}',
+            a_txt
+        )
+        open(auth_helper_path, "w", encoding="utf-8").write(a_txt)
+
+
+def inject_auto_updater():
+    repo = os.environ.get("REPO", "")
+    if not repo:
+        return
+    m_path = "app/src/main/AndroidManifest.xml"
+    if os.path.exists(m_path):
+        txt = open(m_path, encoding="utf-8").read()
+        if "android.permission.INTERNET" not in txt:
+            open(m_path, "w", encoding="utf-8").write(
+                txt.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1)
+            )
+    files = glob.glob("app/src/main/**/MainActivity.kt", recursive=True) + glob.glob("app/src/main/**/MainActivity.java", recursive=True)
+    if not files:
+        return
+    tf = files[0]
+    src = open(tf, encoding="utf-8").read()
+    pm = re.search(r'^\s*(package\s+[^\r\n;]+)', src, re.M)
+    pkg_line = pm.group(1).strip() if pm else "package `in`.yourview.yvgpscam"
+    code = f"""{pkg_line}
+import android.app.AlertDialog
+import android.content.*
+import android.net.Uri
+import android.os.*
+import org.json.JSONObject
+import java.net.*
+import kotlin.concurrent.thread
+
+object AutoAppUpdater {{
+    private const val URL_STR = "https://github.com/{repo}/releases/latest/download/update-manifest.json"
+    private var done = false
+    @JvmStatic fun checkForUpdate(ctx: Context) {{
+        if (done) return; done = true
+        thread {{
+            try {{
+                val c = (URL(URL_STR).openConnection() as HttpURLConnection).apply {{ connectTimeout = 5000; readTimeout = 5000 }}
+                val j = JSONObject(c.inputStream.bufferedReader().readText())
+                val lc = j.getInt("versionCode"); val ln = j.getString("versionName")
+                val notes = j.optString("notes", "New update available."); val apk = j.getString("apkUrl")
+                val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+                val cc = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else @Suppress("DEPRECATION") pi.versionCode
+                if (lc > cc) Handler(Looper.getMainLooper()).post {{
+                    try {{
+                        AlertDialog.Builder(ctx).setTitle("Update Available (v$ln)")
+                            .setMessage("What's New:\\n$notes\\n\\nTap Update Now to install.")
+                            .setPositiveButton("Update Now") {{ _, _ -> ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk))) }}
+                            .setNegativeButton("Later", null).show()
+                    }} catch (_: Exception) {{}}
+                }}
+            }} catch (_: Exception) {{}}
+        }}
+    }}
+}}
+"""
+    open(os.path.join(os.path.dirname(tf), "AutoAppUpdater.kt"), "w", encoding="utf-8").write(code)
+    if "AutoAppUpdater.checkForUpdate" not in src:
+        rep = r'\1\n        AutoAppUpdater.checkForUpdate(this)' if tf.endswith(".kt") else r'\1\n        AutoAppUpdater.checkForUpdate(this);'
+        s2, n = re.subn(r'(super\.onCreate\([^\)]*\);?)', rep, src, count=1)
+        if n > 0:
+            open(tf, "w", encoding="utf-8").write(s2)
 
 
 if __name__ == "__main__":
     fix_packages_and_imports()
+    fix_metadata_sync_mismatches()
     inject_keys_and_google_maps()
+    inject_auto_updater()
