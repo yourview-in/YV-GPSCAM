@@ -73,13 +73,47 @@ def fix_packages_and_imports():
 
 
 def fix_metadata_sync_mismatches():
-    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext' at column 88!
-    # WHY ALL PREVIOUS REGEXES MISSED IT:
-    # Column 88 is a NAMED ARGUMENT (`appContext = ...`)!
-    # e.g. `OnlineReverseGeocoder(appContext = context)` or `PhotoRepository(appContext = appContext)`
-    # where the target constructor's parameter is NOT named `appContext` (e.g. `context: Context`)!
-    # In Kotlin, `Foo(appContext = x)` throws `Unresolved reference 'appContext'` (or `No parameter with name 'appContext'` in K1, `Unresolved reference` in K2 / Gradle 9)!
-    # ALSO handle value-side `appContext` in ALL scopes (top-level functions, companion object, class body)!
+    # Fix 1: LocationMetadataSyncWorker.kt -> Unresolved reference 'appContext' at line 44:88!
+    # WHY ALL PREVIOUS FIXES FAILED:
+    # Look at the dot before column 88: `container.appContext` (e.g. `(applicationContext as YvGpsCamApplication).container.appContext`
+    # or `app.container.appContext`)!
+    # In Kotlin, `container` (`YvGpsCamContainer`) defines `context` (or `private val context: Context`), NOT `public val appContext: Context`!
+    # First, expose `val appContext: android.content.Context get() = ...` on `YvGpsCamContainer` AND replace `.appContext` in `LocationMetadataSyncWorker.kt`!
+    for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
+        c_txt = open(c_path, encoding="utf-8").read()
+        orig_c = c_txt
+        # Remove stale named arguments `isNetworkOnline = ...` and `syncStore = ...`
+        new_lines = [line for line in c_txt.splitlines() if not re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line)]
+        c_txt = "\n".join(new_lines) + "\n"
+
+        # Also check constructor parameter of YvGpsCamContainer (e.g., `class YvGpsCamContainer(context: Context)` or `(private val context: Context)`)
+        # Make sure `val appContext: Context` exists on `YvGpsCamContainer` so `container.appContext` ALWAYS compiles!
+        m_c = re.search(r'(\bclass\s+YvGpsCamContainer\s*\()([^)]*)(\)\s*\{)', c_txt, re.S)
+        if m_c and not re.search(r'\bval\s+appContext\b', c_txt):
+            p_pre, p_args, p_suf = m_c.groups()
+            m_ctx_arg = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', p_args)
+            if m_ctx_arg:
+                ctx_name = m_ctx_arg.group(1)
+                if not re.search(rf'\b(?:val|var)\s+{ctx_name}\s*:', p_args):
+                    p_args = re.sub(rf'\b({ctx_name}\s*:\s*(?:android\.content\.)?Context)', r'val \1', p_args, count=1)
+                else:
+                    p_args = re.sub(rf'\bprivate\s+(val\s+{ctx_name}\s*:)', r'\1', p_args, count=1)
+                c_txt = c_txt[:m_c.start()] + p_pre + p_args + p_suf + f"\n    val appContext: android.content.Context get() = {ctx_name}.applicationContext\n" + c_txt[m_c.end():]
+                print(f"Exposed val appContext on YvGpsCamContainer in {c_path}")
+
+        if c_txt != orig_c:
+            open(c_path, "w", encoding="utf-8").write(c_txt)
+
+    # Also expose `val appContext` on Application class if `YvGpsCamApplication` is used (`(applicationContext as YvGpsCamApplication).appContext`)
+    for app_path in glob.glob("app/src/**/*Application.kt", recursive=True):
+        ap_txt = open(app_path, encoding="utf-8").read()
+        if "class " in ap_txt and "Application()" in ap_txt and "val appContext" not in ap_txt:
+            m_ap = re.search(r'(\bclass\s+[A-Za-z0-9_]+Application\s*:\s*Application\(\)\s*\{)', ap_txt)
+            if m_ap:
+                ap_txt = ap_txt[:m_ap.end()] + "\n    val appContext: android.content.Context get() = applicationContext\n" + ap_txt[m_ap.end():]
+                open(app_path, "w", encoding="utf-8").write(ap_txt)
+                print(f"Exposed val appContext on Application class in {app_path}")
+
     for w_path in glob.glob("app/src/**/LocationMetadataSyncWorker.kt", recursive=True):
         w_txt = open(w_path, encoding="utf-8").read()
         orig_w = w_txt
@@ -87,13 +121,10 @@ def fix_metadata_sync_mismatches():
         for idx, l in enumerate(w_txt.splitlines(), 1):
             print(f"{idx:02d}: {l}")
 
-        # Step A: Strip named argument prefix `appContext = ` -> positional argument!
-        # In Kotlin 2.x (K2 compiler), passing an unknown named parameter `Foo(appContext = ...)` reports:
-        # `Unresolved reference 'appContext'` right at the `appContext =` column!
+        # Replace any `<expr>.appContext` inside CoroutineWorker with `applicationContext` (or keep valid via YvGpsCamContainer.appContext above)
+        # AND ensure bare `appContext` in constructor / class / companion is also valid!
         w_txt = re.sub(r'\bappContext\s*=\s*(?!=)', '', w_txt)
 
-        # Step B: Ensure `appContext` value is ALSO valid everywhere in the file!
-        # Split file into top-level / class / companion sections by tracking brace depth & declarations
         m_cls = re.search(r'(\bclass\s+LocationMetadataSyncWorker\s*\()([^)]*)(\)\s*(?::\s*[^{]+)?\{)', w_txt, re.S)
         if m_cls:
             prefix, ctor_params, suffix = m_cls.groups()
@@ -108,96 +139,11 @@ def fix_metadata_sync_mismatches():
                 if not re.search(r'\b(?:val|var)\s+appContext\b', body_after.split("companion object")[0]):
                     w_txt = w_txt[:m_cls.end()] + f"\n    private val appContext: android.content.Context = {cparam}.applicationContext" + body_after
 
-        # Step C: Check every `fun ...(...)` across the ENTIRE file (companion object AND top-level functions outside class!)
-        # If a static / top-level function (not inside class instance, or inside companion object) uses `appContext`
-        # without having `appContext` parameter or local `val appContext`, replace `appContext` with `<ctx_param>.applicationContext`!
-        comp_pos = w_txt.find("companion object")
-        # Also find end of LocationMetadataSyncWorker class to catch top-level functions after the class!
-        cls_start = w_txt.find("class LocationMetadataSyncWorker")
-        cls_end = len(w_txt)
-        if cls_start != -1:
-            b_open = w_txt.find("{", cls_start)
-            if b_open != -1:
-                depth = 1
-                k = b_open + 1
-                while k < len(w_txt) and depth > 0:
-                    if w_txt[k] == "{":
-                        depth += 1
-                    elif w_txt[k] == "}":
-                        depth -= 1
-                    k += 1
-                cls_end = k
-
-        def fix_non_instance_chunk(chunk):
-            if not chunk or "appContext" not in chunk:
-                return chunk
-            fn_pat = re.compile(r'(\bfun\s+(?:[A-Za-z0-9_<>]+\.)?[A-Za-z0-9_]+\s*\(([^)]*)\))', re.S)
-            lines = chunk.splitlines()
-            full = "\n".join(lines)
-            # Replace per function block or expression function
-            out = []
-            pos = 0
-            while pos < len(full):
-                mf = fn_pat.search(full, pos)
-                if not mf:
-                    out.append(full[pos:])
-                    break
-                out.append(full[pos:mf.end()])
-                p_str = mf.group(2)
-                m_ctx = re.search(r'\b([A-Za-z0-9_]+)\s*:\s*(?:android\.content\.)?Context', p_str)
-                has_app_param = bool(re.search(r'\bappContext\s*:', p_str))
-                # Determine end of this function (brace block or until next `fun `)
-                rest_after_sig = full[mf.end():]
-                m_brace = re.match(r'^\s*(?::\s*[^{=]+)?\{', rest_after_sig)
-                if m_brace:
-                    b_start = mf.end() + m_brace.end() - 1
-                    d = 1
-                    p2 = b_start + 1
-                    while p2 < len(full) and d > 0:
-                        if full[p2] == "{":
-                            d += 1
-                        elif full[p2] == "}":
-                            d -= 1
-                        p2 += 1
-                    fn_body = full[mf.end():p2]
-                    next_pos = p2
-                else:
-                    nxt = fn_pat.search(full, mf.end())
-                    next_pos = nxt.start() if nxt else len(full)
-                    fn_body = full[mf.end():next_pos]
-
-                if not has_app_param and not re.search(r'\b(?:val|var)\s+appContext\b', fn_body):
-                    if m_ctx:
-                        fn_body = re.sub(r'\bappContext\b', f'{m_ctx.group(1)}.applicationContext', fn_body)
-                    elif "this" in mf.group(1) or "Context." in mf.group(1):
-                        fn_body = re.sub(r'\bappContext\b', 'this.applicationContext', fn_body)
-                out.append(fn_body)
-                pos = next_pos
-            return "".join(out)
-
-        if comp_pos != -1 and comp_pos < cls_end:
-            part1 = w_txt[:comp_pos]
-            part2 = fix_non_instance_chunk(w_txt[comp_pos:cls_end])
-            part3 = fix_non_instance_chunk(w_txt[cls_end:])
-            w_txt = part1 + part2 + part3
-        else:
-            part1 = w_txt[:cls_end]
-            part3 = fix_non_instance_chunk(w_txt[cls_end:])
-            w_txt = part1 + part3
-
-        open(w_path, "w", encoding="utf-8").write(w_txt)
-        print("=== LocationMetadataSyncWorker.kt AFTER ===")
-        for idx, l in enumerate(w_txt.splitlines(), 1):
-            print(f"{idx:02d}: {l}")
-
-    # Fix 2: YvGpsCamContainer.kt -> No parameter with name 'isNetworkOnline' / 'syncStore'
-    for c_path in glob.glob("app/src/**/YvGpsCamContainer.kt", recursive=True):
-        c_txt = open(c_path, encoding="utf-8").read()
-        orig_c = c_txt
-        new_lines = [line for line in c_txt.splitlines() if not re.search(r'^\s*(?:isNetworkOnline|syncStore)\s*=', line)]
-        c_txt = "\n".join(new_lines) + "\n"
-        if c_txt != orig_c:
-            open(c_path, "w", encoding="utf-8").write(c_txt)
+        if w_txt != orig_w:
+            open(w_path, "w", encoding="utf-8").write(w_txt)
+            print("=== LocationMetadataSyncWorker.kt AFTER ===")
+            for idx, l in enumerate(w_txt.splitlines(), 1):
+                print(f"{idx:02d}: {l}")
 
     # Fix 3: CameraViewModel.kt -> Unresolved reference 'requestMetadataSyncWhenConnected'
     all_kt = glob.glob("app/src/**/*.kt", recursive=True)
