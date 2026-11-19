@@ -51,6 +51,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -77,7 +78,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -124,7 +127,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -150,6 +152,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -160,7 +163,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -222,6 +227,167 @@ private data class FocusReticleState(
     val isFocused: Boolean?,
     val sequenceId: Int
 )
+
+private data class CameraResponsiveMetrics(
+    val topBarHeight: Dp,
+    val topBarHorizontalPadding: Dp,
+    val topTouchSize: Dp,
+    val topButtonSize: Dp,
+    val topIconSize: Dp,
+    val topCapsuleHPadding: Dp,
+    val topCapsuleVPadding: Dp,
+    val topCapsuleSpacing: Dp,
+    val statusFontSize: TextUnit,
+    val statusIconSize: Dp,
+    val statusHPadding: Dp,
+    val statusVPadding: Dp,
+    val zoomItemMinWidth: Dp,
+    val zoomItemMinHeight: Dp,
+    val zoomCircleSize: Dp,
+    val zoomFontSize: TextUnit,
+    val miniPillHPadding: Dp,
+    val miniPillVPadding: Dp,
+    val miniPillIconSize: Dp,
+    val miniPillFontSize: TextUnit,
+    val miniPillMinHeight: Dp,
+    val modeMinHeight: Dp,
+    val modeHPadding: Dp,
+    val modeVPadding: Dp,
+    val modeIconSize: Dp,
+    val modeFontSize: TextUnit,
+    val podCircleSize: Dp,
+    val podIconSize: Dp,
+    val podLabelFontSize: TextUnit,
+    val podSpacing: Dp,
+    val shutterOuterSize: Dp,
+    val shutterInnerSize: Dp,
+    val shutterIconSize: Dp,
+    val deckSpacing: Dp,
+    val deckBottomPadding: Dp,
+    val fallbackDeckHeight: Dp
+)
+
+private fun computeCameraResponsiveMetrics(maxWidth: Dp, maxHeight: Dp): CameraResponsiveMetrics {
+    val compactWidth = maxWidth < 360.dp
+    val mediumWidth = maxWidth < 412.dp
+    val compactHeight = maxHeight < 660.dp
+    return when {
+        compactWidth -> CameraResponsiveMetrics(
+            topBarHeight = 48.dp,
+            topBarHorizontalPadding = 6.dp,
+            topTouchSize = 38.dp,
+            topButtonSize = 34.dp,
+            topIconSize = 17.dp,
+            topCapsuleHPadding = 2.dp,
+            topCapsuleVPadding = 2.dp,
+            topCapsuleSpacing = 0.dp,
+            statusFontSize = 8.5.sp,
+            statusIconSize = 11.dp,
+            statusHPadding = 7.dp,
+            statusVPadding = 4.dp,
+            zoomItemMinWidth = 34.dp,
+            zoomItemMinHeight = 32.dp,
+            zoomCircleSize = 26.dp,
+            zoomFontSize = 9.sp,
+            miniPillHPadding = 7.dp,
+            miniPillVPadding = 4.5.dp,
+            miniPillIconSize = 12.dp,
+            miniPillFontSize = 9.5.sp,
+            miniPillMinHeight = 30.dp,
+            modeMinHeight = 34.dp,
+            modeHPadding = 7.dp,
+            modeVPadding = 5.dp,
+            modeIconSize = 11.dp,
+            modeFontSize = 9.sp,
+            podCircleSize = 38.dp,
+            podIconSize = 18.dp,
+            podLabelFontSize = 9.sp,
+            podSpacing = 3.dp,
+            shutterOuterSize = 64.dp,
+            shutterInnerSize = 58.dp,
+            shutterIconSize = 22.dp,
+            deckSpacing = 6.dp,
+            deckBottomPadding = 6.dp,
+            fallbackDeckHeight = 138.dp
+        )
+        mediumWidth -> CameraResponsiveMetrics(
+            topBarHeight = 54.dp,
+            topBarHorizontalPadding = 8.dp,
+            topTouchSize = 44.dp,
+            topButtonSize = 38.dp,
+            topIconSize = 19.dp,
+            topCapsuleHPadding = 3.dp,
+            topCapsuleVPadding = 2.5.dp,
+            topCapsuleSpacing = 1.dp,
+            statusFontSize = 9.sp,
+            statusIconSize = 12.dp,
+            statusHPadding = 8.dp,
+            statusVPadding = 4.5.dp,
+            zoomItemMinWidth = 38.dp,
+            zoomItemMinHeight = 36.dp,
+            zoomCircleSize = 28.dp,
+            zoomFontSize = 9.5.sp,
+            miniPillHPadding = 9.dp,
+            miniPillVPadding = 5.dp,
+            miniPillIconSize = 13.dp,
+            miniPillFontSize = 10.sp,
+            miniPillMinHeight = 32.dp,
+            modeMinHeight = 38.dp,
+            modeHPadding = 8.dp,
+            modeVPadding = 5.5.dp,
+            modeIconSize = 11.5.dp,
+            modeFontSize = 9.5.sp,
+            podCircleSize = 42.dp,
+            podIconSize = 19.dp,
+            podLabelFontSize = 9.5.sp,
+            podSpacing = 4.dp,
+            shutterOuterSize = if (compactHeight) 68.dp else 72.dp,
+            shutterInnerSize = if (compactHeight) 62.dp else 66.dp,
+            shutterIconSize = 24.dp,
+            deckSpacing = if (compactHeight) 6.dp else 8.dp,
+            deckBottomPadding = 6.dp,
+            fallbackDeckHeight = 152.dp
+        )
+        else -> CameraResponsiveMetrics(
+            topBarHeight = 60.dp,
+            topBarHorizontalPadding = 10.dp,
+            topTouchSize = 48.dp,
+            topButtonSize = 42.dp,
+            topIconSize = 20.dp,
+            topCapsuleHPadding = 4.dp,
+            topCapsuleVPadding = 3.dp,
+            topCapsuleSpacing = 2.dp,
+            statusFontSize = 9.5.sp,
+            statusIconSize = 13.dp,
+            statusHPadding = 10.dp,
+            statusVPadding = 5.dp,
+            zoomItemMinWidth = 42.dp,
+            zoomItemMinHeight = 38.dp,
+            zoomCircleSize = 30.dp,
+            zoomFontSize = 10.sp,
+            miniPillHPadding = 10.dp,
+            miniPillVPadding = 6.dp,
+            miniPillIconSize = 14.dp,
+            miniPillFontSize = 10.5.sp,
+            miniPillMinHeight = 34.dp,
+            modeMinHeight = 40.dp,
+            modeHPadding = 9.dp,
+            modeVPadding = 6.dp,
+            modeIconSize = 12.dp,
+            modeFontSize = 10.sp,
+            podCircleSize = 46.dp,
+            podIconSize = 21.dp,
+            podLabelFontSize = 10.sp,
+            podSpacing = 4.dp,
+            shutterOuterSize = if (compactHeight) 72.dp else 78.dp,
+            shutterInnerSize = if (compactHeight) 66.dp else 72.dp,
+            shutterIconSize = 25.dp,
+            deckSpacing = if (compactHeight) 6.dp else 8.dp,
+            deckBottomPadding = 8.dp,
+            fallbackDeckHeight = 166.dp
+        )
+    }
+}
 
 enum class DeviceCaptureOrientation(
     val label: String,
@@ -743,7 +909,10 @@ fun CameraScreen(
     val evStep = exposureState?.exposureCompensationStep?.toFloat() ?: 0.33f
 
     // Modernised Floating Glass Top Toolbar
-    val topIconToolbar: @Composable () -> Unit = {
+    var topToolbarHeightPx by remember { mutableIntStateOf(0) }
+    var bottomDeckHeightPx by remember { mutableIntStateOf(0) }
+
+    val topIconToolbar: @Composable (CameraResponsiveMetrics) -> Unit = { metrics ->
         val flashIcon = when (hudState.flashMode) {
             ImageCapture.FLASH_MODE_ON -> Icons.Rounded.FlashOn
             ImageCapture.FLASH_MODE_AUTO -> Icons.Rounded.FlashAuto
@@ -772,6 +941,7 @@ fun CameraScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .onSizeChanged { topToolbarHeightPx = it.height }
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -788,8 +958,8 @@ fun CameraScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp)
-                    .padding(horizontal = 10.dp)
+                    .height(metrics.topBarHeight)
+                    .padding(horizontal = metrics.topBarHorizontalPadding)
                     .testTag("camera_quick_settings_bar"),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -799,6 +969,9 @@ fun CameraScreen(
                     icon = Icons.Rounded.Tune,
                     contentDescription = "Toggle camera tools",
                     active = hudState.showToolsDrawer,
+                    touchSize = metrics.topTouchSize,
+                    buttonSize = metrics.topButtonSize,
+                    iconSize = metrics.topIconSize,
                     badgeDot = !hudState.showToolsDrawer && activeToolsCount > 0,
                     badgeDotColor = ShutterGold,
                     onClick = {
@@ -809,11 +982,18 @@ fun CameraScreen(
                 )
 
                 // 2. Center Grouped Glass Capsule: Flash | Auto Capture | Google Map | Switch Lens
-                ModernFloatingCapsule {
+                ModernFloatingCapsule(
+                    horizontalPadding = metrics.topCapsuleHPadding,
+                    verticalPadding = metrics.topCapsuleVPadding,
+                    itemSpacing = metrics.topCapsuleSpacing
+                ) {
                     ModernGlassCircleButton(
                         icon = flashIcon,
                         contentDescription = stringResource(R.string.toggle_flash),
                         active = hudState.flashMode != ImageCapture.FLASH_MODE_OFF,
+                        touchSize = metrics.topTouchSize,
+                        buttonSize = metrics.topButtonSize,
+                        iconSize = metrics.topIconSize,
                         standaloneGlass = false,
                         badgeText = when (hudState.flashMode) {
                             ImageCapture.FLASH_MODE_ON -> "ON"
@@ -832,6 +1012,9 @@ fun CameraScreen(
                         contentDescription = "Toggle Auto Capture mode",
                         active = isAutoMode,
                         activeColor = TelemetryEmerald,
+                        touchSize = metrics.topTouchSize,
+                        buttonSize = metrics.topButtonSize,
+                        iconSize = metrics.topIconSize,
                         standaloneGlass = false,
                         badgeText = if (isAutoMode) "${hudState.autoCaptureIntervalSeconds}s" else null,
                         onClick = {
@@ -852,6 +1035,9 @@ fun CameraScreen(
                         icon = Icons.Rounded.TravelExplore,
                         contentDescription = "Open interactive in-app map",
                         active = false,
+                        touchSize = metrics.topTouchSize,
+                        buttonSize = metrics.topButtonSize,
+                        iconSize = metrics.topIconSize,
                         standaloneGlass = false,
                         badgeDot = telemetry.hasFix,
                         badgeDotColor = TelemetryEmerald,
@@ -866,6 +1052,9 @@ fun CameraScreen(
                         icon = Icons.Rounded.FlipCameraAndroid,
                         contentDescription = stringResource(R.string.switch_camera),
                         active = hudState.lensFacing == CameraSelector.LENS_FACING_FRONT,
+                        touchSize = metrics.topTouchSize,
+                        buttonSize = metrics.topButtonSize,
+                        iconSize = metrics.topIconSize,
                         standaloneGlass = false,
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -880,6 +1069,9 @@ fun CameraScreen(
                     icon = Icons.Rounded.Settings,
                     contentDescription = "Open camera and app settings",
                     active = false,
+                    touchSize = metrics.topTouchSize,
+                    buttonSize = metrics.topButtonSize,
+                    iconSize = metrics.topIconSize,
                     badgeDot = hasPendingUpdate,
                     badgeDotColor = TelemetryEmerald,
                     onClick = {
@@ -892,7 +1084,7 @@ fun CameraScreen(
         }
     }
 
-    val floatingToolsOverlay: @Composable () -> Unit = {
+    val floatingToolsOverlay: @Composable (Dp) -> Unit = { topBarHeightDp ->
         AnimatedVisibility(
             visible = hudState.showToolsDrawer,
             enter = fadeIn(),
@@ -901,10 +1093,7 @@ fun CameraScreen(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(
-                        WindowInsets.statusBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Top)
-                    )
-                    .padding(top = 60.dp)
+                    .padding(top = topBarHeightDp)
             ) {
                 val maxDrawerHeight = (maxHeight * 0.78f).coerceAtLeast(240.dp)
                 val scrimInteraction = remember { MutableInteractionSource() }
@@ -1161,387 +1350,448 @@ fun CameraScreen(
         }
     }
 
-    val viewfinderOverlays: @Composable (Boolean) -> Unit = { fullScreenOverlay ->
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val topInsetPad = if (fullScreenOverlay) 68.dp else 8.dp
-            val bottomControlsReserve = if (fullScreenOverlay) 156.dp else 0.dp
-            val isFrontCam = hudState.lensFacing == CameraSelector.LENS_FACING_FRONT
+    val viewfinderOverlays: @Composable (Boolean, CameraResponsiveMetrics, Dp, Dp) -> Unit =
+        { fullScreenOverlay, metrics, topSafeInset, bottomSafeInset ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                val topInsetPad = if (fullScreenOverlay) topSafeInset + 6.dp else 8.dp
+                val bottomControlsReserve = if (fullScreenOverlay) bottomSafeInset + 6.dp else 6.dp
+                val isFrontCam = hudState.lensFacing == CameraSelector.LENS_FACING_FRONT
 
-            if (hudState.showGrid) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val lineColor = Color.White.copy(alpha = 0.16f)
-                    drawLine(lineColor, Offset(size.width / 3f, 0f), Offset(size.width / 3f, size.height), strokeWidth = 0.9.dp.toPx())
-                    drawLine(lineColor, Offset(size.width * 2f / 3f, 0f), Offset(size.width * 2f / 3f, size.height), strokeWidth = 0.9.dp.toPx())
-                    drawLine(lineColor, Offset(0f, size.height / 3f), Offset(size.width, size.height / 3f), strokeWidth = 0.9.dp.toPx())
-                    drawLine(lineColor, Offset(0f, size.height * 2f / 3f), Offset(size.width, size.height * 2f / 3f), strokeWidth = 0.9.dp.toPx())
+                if (hudState.showGrid) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val lineColor = Color.White.copy(alpha = 0.16f)
+                        drawLine(lineColor, Offset(size.width / 3f, 0f), Offset(size.width / 3f, size.height), strokeWidth = 0.9.dp.toPx())
+                        drawLine(lineColor, Offset(size.width * 2f / 3f, 0f), Offset(size.width * 2f / 3f, size.height), strokeWidth = 0.9.dp.toPx())
+                        drawLine(lineColor, Offset(0f, size.height / 3f), Offset(size.width, size.height / 3f), strokeWidth = 0.9.dp.toPx())
+                        drawLine(lineColor, Offset(0f, size.height * 2f / 3f), Offset(size.width, size.height * 2f / 3f), strokeWidth = 0.9.dp.toPx())
+                    }
                 }
-            }
 
-            if (stampConfig.showDigitalLevel) {
-                DigitalHorizonLevelOverlay(
-                    pitchDeg = horizonTilt.first,
-                    rollDeg = horizonTilt.second,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else {
-                val activeReticle = focusReticle
-                if (activeReticle != null) {
-                    TapFocusReticleOverlay(
-                        reticle = activeReticle,
-                        modifier = Modifier.fillMaxSize()
+                if (stampConfig.showDigitalLevel) {
+                    DigitalHorizonLevelOverlay(
+                        pitchDeg = horizonTilt.first,
+                        rollDeg = horizonTilt.second,
+                        modifier = Modifier.align(Alignment.Center)
                     )
                 } else {
-                    CenterFocusBracketsGuide(modifier = Modifier.align(Alignment.Center))
-                }
-            }
-
-            // Countdown Overlay (3s / 10s Timer)
-            if (hudState.countdownRemaining > 0) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.65f),
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(92.dp)
-                        .border(2.dp, ShutterGold, CircleShape)
-                        .testTag("camera_timer_countdown_badge")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = hudState.countdownRemaining.toString(),
-                            fontSize = 40.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = ShutterGold
+                    val activeReticle = focusReticle
+                    if (activeReticle != null) {
+                        TapFocusReticleOverlay(
+                            reticle = activeReticle,
+                            modifier = Modifier.fillMaxSize()
                         )
+                    } else {
+                        CenterFocusBracketsGuide(modifier = Modifier.align(Alignment.Center))
                     }
                 }
-            }
 
-            // Shutter Flash
-            AnimatedVisibility(
-                visible = shutterFlash,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Box(
+                // Countdown Overlay (3s / 10s Timer)
+                if (hudState.countdownRemaining > 0) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.65f),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(92.dp)
+                            .border(2.dp, ShutterGold, CircleShape)
+                            .testTag("camera_timer_countdown_badge")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = hudState.countdownRemaining.toString(),
+                                fontSize = 40.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = ShutterGold
+                            )
+                        }
+                    }
+                }
+
+                // Shutter Flash
+                AnimatedVisibility(
+                    visible = shutterFlash,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.White.copy(alpha = 0.55f))
+                    )
+                }
+
+                // Non-overlapping HUD stack constrained safely between top toolbar and bottom deck
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.White.copy(alpha = 0.55f))
-                )
-            }
-
-            // Top-Left: Auto-Capture Live Pill OR Video Recording Timer OR Orientation Pill
-            if (hudState.isAutoCapturing) {
-                Surface(
-                    color = Color(0xD90A2E23),
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = 10.dp, top = topInsetPad)
-                        .border(1.dp, TelemetryEmerald, CircleShape)
-                        .clip(CircleShape)
-                        .clickable { stopAutoCaptureLoop(notify = true) }
-                        .testTag("camera_auto_capture_status_pill")
+                        .padding(top = topInsetPad, bottom = bottomControlsReserve),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    // 1. Top Status Bar Row (Left orientation/REC/AUTO pill | Right Offline/Sync + GPS pill)
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MotionPhotosAuto,
-                            contentDescription = "Auto Capture active",
-                            tint = TelemetryEmerald,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "AUTO #${hudState.autoCaptureCount} • ${hudState.autoCaptureCountdownSec}s • STOP",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            } else if (hudState.isRecordingVideo) {
-                val mins = hudState.recordingElapsedSeconds / 60
-                val secs = hudState.recordingElapsedSeconds % 60
-                Surface(
-                    color = Color(0xFFD92D20),
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = 10.dp, top = topInsetPad)
-                        .testTag("video_recording_timer_pill")
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        )
-                        Text(
-                            text = String.format(Locale.US, "REC %02d:%02d", mins, secs),
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            } else {
-                ViewfinderOrientationStatusPill(
-                    orientation = deviceOrientation,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = 10.dp, top = topInsetPad)
-                )
-            }
-
-            // Top-Right: Subtle Offline / Sync Pending Indicator + Modern GPS Signal Status Pill
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(end = 10.dp, top = topInsetPad)
-            ) {
-                CameraOfflineSyncStatusIcon(
-                    state = offlineSyncState,
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        when (offlineSyncState.mode) {
-                            CameraConnectivitySyncMode.OFFLINE_MODE -> {
-                                val cachedMsg = if (offlineSyncState.pendingCount > 0) {
-                                    "Offline Mode · ${offlineSyncState.pendingCount} geotag update(s) cached for sync"
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Box(modifier = Modifier.weight(1f, fill = false)) {
+                                if (hudState.isAutoCapturing) {
+                                    Surface(
+                                        color = Color(0xD90A2E23),
+                                        shape = CircleShape,
+                                        modifier = Modifier
+                                            .border(1.dp, TelemetryEmerald, CircleShape)
+                                            .clip(CircleShape)
+                                            .clickable { stopAutoCaptureLoop(notify = true) }
+                                            .testTag("camera_auto_capture_status_pill")
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = metrics.statusHPadding,
+                                                vertical = metrics.statusVPadding
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.MotionPhotosAuto,
+                                                contentDescription = "Auto Capture active",
+                                                tint = TelemetryEmerald,
+                                                modifier = Modifier.size(metrics.statusIconSize)
+                                            )
+                                            Text(
+                                                text = "AUTO #${hudState.autoCaptureCount} • ${hudState.autoCaptureCountdownSec}s • STOP",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = metrics.statusFontSize,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                } else if (hudState.isRecordingVideo) {
+                                    val mins = hudState.recordingElapsedSeconds / 60
+                                    val secs = hudState.recordingElapsedSeconds % 60
+                                    Surface(
+                                        color = Color(0xFFD92D20),
+                                        shape = CircleShape,
+                                        modifier = Modifier.testTag("video_recording_timer_pill")
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(
+                                                horizontal = metrics.statusHPadding,
+                                                vertical = metrics.statusVPadding
+                                            )
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.White)
+                                            )
+                                            Text(
+                                                text = String.format(Locale.US, "REC %02d:%02d", mins, secs),
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = metrics.statusFontSize,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
                                 } else {
-                                    "Offline Mode · Using cached map tiles & local GPS"
-                                }
-                                viewModel.setStatusMessage(cachedMsg)
-                            }
-                            CameraConnectivitySyncMode.SYNC_PENDING -> {
-                                viewModel.requestPendingMetadataSync()
-                                viewModel.setStatusMessage(
-                                    if (offlineSyncState.pendingCount > 0) {
-                                        "Sync Pending · Re-syncing ${offlineSyncState.pendingCount} cached location update(s)..."
-                                    } else {
-                                        "Sync Pending · Re-syncing location metadata..."
-                                    }
-                                )
-                            }
-                            CameraConnectivitySyncMode.ONLINE_SYNCED -> {
-                                viewModel.requestPendingMetadataSync()
-                                viewModel.setStatusMessage("Online · Location telemetry & geotags synced")
-                            }
-                        }
-                    }
-                )
-
-                CompactGpsStatusPill(
-                    signalState = telemetry.signalState,
-                    accuracyMeters = telemetry.accuracyMeters,
-                    satellitesUsed = telemetry.satellitesUsed,
-                    satellitesVisible = telemetry.satellitesVisible,
-                    offlineOnly = stampConfig.offlineOnlyMapMode,
-                    isDeviceLocationEnabled = isDeviceLocationEnabled,
-                    hasLocationPermission = hasLocationPermission,
-                    onTapAction = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        when {
-                            !hasLocationPermission -> {
-                                permissionLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    ViewfinderOrientationStatusPill(
+                                        orientation = deviceOrientation,
+                                        fontSize = metrics.statusFontSize,
+                                        iconSize = metrics.statusIconSize,
+                                        horizontalPadding = metrics.statusHPadding,
+                                        verticalPadding = metrics.statusVPadding
                                     )
-                                )
-                            }
-                            !isDeviceLocationEnabled -> {
-                                runCatching {
-                                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                                 }
                             }
-                            else -> {
-                                viewModel.refreshDeviceLocation(true)
-                                viewModel.setStatusMessage("Refreshing device GPS fix...")
-                            }
-                        }
-                    }
-                )
-            }
 
-            // Detected Live QR Code Banner
-            val qrText = hudState.detectedQrText
-            if (qrText != null && stampConfig.qrDetectionEnabled) {
-                DetectedQrActionBanner(
-                    qrText = qrText,
-                    context = context,
-                    onDismiss = { viewModel.updateDetectedQrCode(null) },
-                    onOpenGeoLocation = { lat, lon ->
-                        viewModel.updateDetectedQrCode(null)
-                        onOpenInAppMapCoords(lat, lon)
-                    },
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = topInsetPad + 32.dp)
-                )
-            }
+                            Spacer(Modifier.width(6.dp))
 
-            // Stamp Preview Card + Floating Zoom & Quick Control Strip
-            val isTopStamp = stampConfig.stampPosition == StampPosition.TOP_LEFT ||
-                stampConfig.stampPosition == StampPosition.TOP_CENTER ||
-                stampConfig.stampPosition == StampPosition.TOP_RIGHT
-
-            if (isTopStamp) {
-                val topAlign = when (stampConfig.stampPosition) {
-                    StampPosition.TOP_LEFT -> Alignment.TopStart
-                    StampPosition.TOP_RIGHT -> Alignment.TopEnd
-                    else -> Alignment.TopCenter
-                }
-                Box(
-                    modifier = Modifier
-                        .align(topAlign)
-                        .padding(horizontal = 8.dp, vertical = topInsetPad + 34.dp)
-                ) {
-                    StampPreviewCard(
-                        telemetry = telemetry,
-                        config = stampConfig,
-                        miniMapBitmap = miniMapBitmap,
-                        isFrontCamera = isFrontCam,
-                        onMiniMapClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onOpenImageOnMap()
-                        },
-                        onClick = { viewModel.cycleStampTemplate() }
-                    )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .padding(bottom = bottomControlsReserve + 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (!isTopStamp) {
-                    val horizontalAlign = when (stampConfig.stampPosition) {
-                        StampPosition.BOTTOM_LEFT -> Alignment.Start
-                        StampPosition.BOTTOM_RIGHT -> Alignment.End
-                        else -> Alignment.CenterHorizontally
-                    }
-                    Box(modifier = Modifier.align(horizontalAlign)) {
-                        StampPreviewCard(
-                            telemetry = telemetry,
-                            config = stampConfig,
-                            miniMapBitmap = miniMapBitmap,
-                            isFrontCamera = isFrontCam,
-                            onMiniMapClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onOpenImageOnMap()
-                            },
-                            onClick = { viewModel.cycleStampTemplate() }
-                        )
-                    }
-                }
-
-                // Auto-Capture Interval Selector Strip when AUTO mode is active
-                AnimatedVisibility(visible = hudState.captureMode == CameraCaptureMode.AUTO_CAPTURE) {
-                    ModernFloatingCapsule(
-                        containerColor = Color(0xBA0E1621),
-                        borderColor = TelemetryEmerald.copy(alpha = 0.55f),
-                        modifier = Modifier.testTag("auto_capture_interval_bar")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MotionPhotosAuto,
-                            contentDescription = "Auto capture interval",
-                            tint = TelemetryEmerald,
-                            modifier = Modifier
-                                .padding(start = 6.dp, end = 4.dp)
-                                .size(15.dp)
-                        )
-                        listOf(3, 5, 10).forEach { sec ->
-                            val selected = hudState.autoCaptureIntervalSeconds == sec
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        viewModel.setAutoCaptureInterval(sec)
-                                    }
-                                    .testTag("auto_interval_${sec}s")
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
-                                Surface(
-                                    color = if (selected) TelemetryEmerald else Color.Transparent,
-                                    shape = CircleShape
-                                ) {
-                                    Text(
-                                        text = "${sec}s",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = if (selected) Color(0xFF0A1410) else Color.White,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                    )
+                                CameraOfflineSyncStatusIcon(
+                                    state = offlineSyncState,
+                                    iconSize = metrics.statusIconSize,
+                                    fontSize = metrics.statusFontSize,
+                                    verticalPadding = metrics.statusVPadding,
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        when (offlineSyncState.mode) {
+                                            CameraConnectivitySyncMode.OFFLINE_MODE -> {
+                                                val cachedMsg = if (offlineSyncState.pendingCount > 0) {
+                                                    "Offline Mode · ${offlineSyncState.pendingCount} geotag update(s) cached for sync"
+                                                } else {
+                                                    "Offline Mode · Using cached map tiles & local GPS"
+                                                }
+                                                viewModel.setStatusMessage(cachedMsg)
+                                            }
+                                            CameraConnectivitySyncMode.SYNC_PENDING -> {
+                                                viewModel.requestPendingMetadataSync()
+                                                viewModel.setStatusMessage(
+                                                    if (offlineSyncState.pendingCount > 0) {
+                                                        "Sync Pending · Re-syncing ${offlineSyncState.pendingCount} cached location update(s)..."
+                                                    } else {
+                                                        "Sync Pending · Re-syncing location metadata..."
+                                                    }
+                                                )
+                                            }
+                                            CameraConnectivitySyncMode.ONLINE_SYNCED -> {
+                                                viewModel.requestPendingMetadataSync()
+                                                viewModel.setStatusMessage("Online · Location telemetry & geotags synced")
+                                            }
+                                        }
+                                    }
+                                )
+
+                                CompactGpsStatusPill(
+                                    signalState = telemetry.signalState,
+                                    accuracyMeters = telemetry.accuracyMeters,
+                                    satellitesUsed = telemetry.satellitesUsed,
+                                    satellitesVisible = telemetry.satellitesVisible,
+                                    offlineOnly = stampConfig.offlineOnlyMapMode,
+                                    isDeviceLocationEnabled = isDeviceLocationEnabled,
+                                    hasLocationPermission = hasLocationPermission,
+                                    fontSize = metrics.statusFontSize,
+                                    iconSize = metrics.statusIconSize,
+                                    horizontalPadding = metrics.statusHPadding,
+                                    verticalPadding = metrics.statusVPadding,
+                                    onTapAction = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        when {
+                                            !hasLocationPermission -> {
+                                                permissionLauncher.launch(
+                                                    arrayOf(
+                                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                                    )
+                                                )
+                                            }
+                                            !isDeviceLocationEnabled -> {
+                                                runCatching {
+                                                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                                                }
+                                            }
+                                            else -> {
+                                                viewModel.refreshDeviceLocation(true)
+                                                viewModel.setStatusMessage("Refreshing device GPS fix...")
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        // Detected Live QR Code Banner cleanly below top status row
+                        val qrText = hudState.detectedQrText
+                        if (qrText != null && stampConfig.qrDetectionEnabled) {
+                            DetectedQrActionBanner(
+                                qrText = qrText,
+                                context = context,
+                                onDismiss = { viewModel.updateDetectedQrCode(null) },
+                                onOpenGeoLocation = { lat, lon ->
+                                    viewModel.updateDetectedQrCode(null)
+                                    onOpenInAppMapCoords(lat, lon)
+                                },
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                    }
+
+                    // 2. Flexible Middle Region for Stamp Card (zero collision with top status pills or zoom strip)
+                    val isTopStamp = stampConfig.stampPosition == StampPosition.TOP_LEFT ||
+                        stampConfig.stampPosition == StampPosition.TOP_CENTER ||
+                        stampConfig.stampPosition == StampPosition.TOP_RIGHT
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        val stampAlign = when (stampConfig.stampPosition) {
+                            StampPosition.TOP_LEFT -> Alignment.TopStart
+                            StampPosition.TOP_CENTER -> Alignment.TopCenter
+                            StampPosition.TOP_RIGHT -> Alignment.TopEnd
+                            StampPosition.BOTTOM_LEFT -> Alignment.BottomStart
+                            StampPosition.BOTTOM_RIGHT -> Alignment.BottomEnd
+                            StampPosition.BOTTOM_CENTER -> Alignment.BottomCenter
+                        }
+                        Box(modifier = Modifier.align(stampAlign)) {
+                            StampPreviewCard(
+                                telemetry = telemetry,
+                                config = stampConfig,
+                                miniMapBitmap = miniMapBitmap,
+                                isFrontCamera = isFrontCam,
+                                onMiniMapClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onOpenImageOnMap()
+                                },
+                                onClick = { viewModel.cycleStampTemplate() }
+                            )
+                        }
+                    }
+
+                    // 3. Bottom Floating Controls Strip (Auto Interval + Responsive Scrollable Zoom/Torch/Burst/Pause)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Auto-Capture Interval Selector Strip when AUTO mode is active
+                        AnimatedVisibility(visible = hudState.captureMode == CameraCaptureMode.AUTO_CAPTURE) {
+                            ModernFloatingCapsule(
+                                containerColor = Color(0xBA0E1621),
+                                borderColor = TelemetryEmerald.copy(alpha = 0.55f),
+                                horizontalPadding = metrics.topCapsuleHPadding,
+                                verticalPadding = metrics.topCapsuleVPadding,
+                                itemSpacing = metrics.topCapsuleSpacing,
+                                modifier = Modifier.testTag("auto_capture_interval_bar")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MotionPhotosAuto,
+                                    contentDescription = "Auto capture interval",
+                                    tint = TelemetryEmerald,
+                                    modifier = Modifier
+                                        .padding(start = 5.dp, end = 3.dp)
+                                        .size(metrics.miniPillIconSize)
+                                )
+                                listOf(3, 5, 10).forEach { sec ->
+                                    val selected = hudState.autoCaptureIntervalSeconds == sec
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .defaultMinSize(
+                                                minWidth = metrics.zoomItemMinWidth,
+                                                minHeight = metrics.zoomItemMinHeight
+                                            )
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewModel.setAutoCaptureInterval(sec)
+                                            }
+                                            .testTag("auto_interval_${sec}s")
+                                    ) {
+                                        Surface(
+                                            color = if (selected) TelemetryEmerald else Color.Transparent,
+                                            shape = CircleShape
+                                        ) {
+                                            Text(
+                                                text = "${sec}s",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = metrics.zoomFontSize,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = if (selected) Color(0xFF0A1410) else Color.White,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
 
-                // Floating Zoom + Quick Pro Toggle Strip
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ZoomSelectorPill(
-                        zoomOptions = zoomOptions,
-                        currentZoom = hudState.zoomRatio,
-                        onSelectZoom = { viewModel.setZoomRatio(it) }
-                    )
+                        // Floating Zoom + Quick Pro Toggle Strip (scrollable on narrow screens so buttons never collide)
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            ZoomSelectorPill(
+                                zoomOptions = zoomOptions,
+                                currentZoom = hudState.zoomRatio,
+                                onSelectZoom = { viewModel.setZoomRatio(it) },
+                                itemMinWidth = metrics.zoomItemMinWidth,
+                                itemMinHeight = metrics.zoomItemMinHeight,
+                                circleSize = metrics.zoomCircleSize,
+                                fontSize = metrics.zoomFontSize
+                            )
 
-                    if (hudState.lensFacing == CameraSelector.LENS_FACING_BACK) {
-                        ModernMiniTogglePill(
-                            icon = Icons.Rounded.FlashlightOn,
-                            label = if (isTorchEnabled) "ON" else "Torch",
-                            active = isTorchEnabled,
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                isTorchEnabled = !isTorchEnabled
-                            },
-                            testTag = "camera_quick_torch_pill"
-                        )
-                    }
+                            if (hudState.captureMode == CameraCaptureMode.VIDEO && hudState.isRecordingVideo) {
+                                ModernMiniTogglePill(
+                                    icon = if (isVideoPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                    label = if (isVideoPaused) "Resume" else "Pause",
+                                    active = isVideoPaused,
+                                    horizontalPadding = metrics.miniPillHPadding,
+                                    verticalPadding = metrics.miniPillVPadding,
+                                    iconSize = metrics.miniPillIconSize,
+                                    fontSize = metrics.miniPillFontSize,
+                                    minHeight = metrics.miniPillMinHeight,
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (isVideoPaused) {
+                                            activeRecording?.resume()
+                                            isVideoPaused = false
+                                        } else {
+                                            activeRecording?.pause()
+                                            isVideoPaused = true
+                                        }
+                                    },
+                                    testTag = "video_pause_resume_button"
+                                )
+                            }
 
-                    if (hudState.captureMode != CameraCaptureMode.VIDEO) {
-                        ModernMiniTogglePill(
-                            icon = Icons.Rounded.BurstMode,
-                            label = if (isBurstMode) "3x" else "Burst",
-                            active = isBurstMode,
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                isBurstMode = !isBurstMode
-                            },
-                            testTag = "camera_quick_burst_pill"
-                        )
+                            if (hudState.lensFacing == CameraSelector.LENS_FACING_BACK) {
+                                ModernMiniTogglePill(
+                                    icon = Icons.Rounded.FlashlightOn,
+                                    label = if (isTorchEnabled) "ON" else "Torch",
+                                    active = isTorchEnabled,
+                                    horizontalPadding = metrics.miniPillHPadding,
+                                    verticalPadding = metrics.miniPillVPadding,
+                                    iconSize = metrics.miniPillIconSize,
+                                    fontSize = metrics.miniPillFontSize,
+                                    minHeight = metrics.miniPillMinHeight,
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        isTorchEnabled = !isTorchEnabled
+                                    },
+                                    testTag = "camera_quick_torch_pill"
+                                )
+                            }
+
+                            if (hudState.captureMode != CameraCaptureMode.VIDEO) {
+                                ModernMiniTogglePill(
+                                    icon = Icons.Rounded.BurstMode,
+                                    label = if (isBurstMode) "3x" else "Burst",
+                                    active = isBurstMode,
+                                    horizontalPadding = metrics.miniPillHPadding,
+                                    verticalPadding = metrics.miniPillVPadding,
+                                    iconSize = metrics.miniPillIconSize,
+                                    fontSize = metrics.miniPillFontSize,
+                                    minHeight = metrics.miniPillMinHeight,
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        isBurstMode = !isBurstMode
+                                    },
+                                    testTag = "camera_quick_burst_pill"
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
     // Modernised Bottom Pro Camera Deck
-    val bottomCameraDeck: @Composable () -> Unit = {
+    val bottomCameraDeck: @Composable (CameraResponsiveMetrics) -> Unit = { metrics ->
         val visibleModes = remember(stampConfig.showReportsModeOnCamera) {
             buildList {
                 add(CameraCaptureMode.SHARE_PHOTO)
@@ -1557,6 +1807,7 @@ fun CameraScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .onSizeChanged { bottomDeckHeightPx = it.height }
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -1566,9 +1817,9 @@ fun CameraScreen(
                     )
                 )
                 .navigationBarsPadding()
-                .padding(bottom = 8.dp),
+                .padding(bottom = metrics.deckBottomPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(metrics.deckSpacing)
         ) {
             // Subtle modern hairline glow divider
             Box(
@@ -1602,16 +1853,23 @@ fun CameraScreen(
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
             }
 
-            // Sleek Stadium Mode Rail with Icons.Rounded Glyphs
+            // Sleek Stadium Mode Rail with horizontal scroll safety on narrow screens
             ModernFloatingCapsule(
                 containerColor = Color.White.copy(alpha = 0.07f),
                 borderColor = Color.White.copy(alpha = 0.14f),
-                modifier = Modifier.padding(horizontal = 8.dp)
+                horizontalPadding = metrics.topCapsuleHPadding,
+                verticalPadding = metrics.topCapsuleVPadding,
+                itemSpacing = metrics.topCapsuleSpacing,
+                modifier = Modifier
+                    .padding(horizontal = 8.dp)
+                    .horizontalScroll(rememberScrollState())
             ) {
                 visibleModes.forEach { mode ->
                     val isSelected = hudState.captureMode == mode
@@ -1630,7 +1888,7 @@ fun CameraScreen(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .defaultMinSize(minHeight = 48.dp)
+                            .defaultMinSize(minHeight = metrics.modeMinHeight)
                             .clip(CircleShape)
                             .clickable {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1649,21 +1907,25 @@ fun CameraScreen(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(
+                                    horizontal = metrics.modeHPadding,
+                                    vertical = metrics.modeVPadding
+                                )
                             ) {
                                 Icon(
                                     imageVector = modeIcon,
                                     contentDescription = null,
                                     tint = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.78f),
-                                    modifier = Modifier.size(12.dp)
+                                    modifier = Modifier.size(metrics.modeIconSize)
                                 )
                                 Text(
                                     text = mode.label,
-                                    fontSize = 10.sp,
+                                    fontSize = metrics.modeFontSize,
                                     fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
                                     color = if (isSelected) Color(0xFF101419) else Color.White.copy(alpha = 0.85f),
-                                    letterSpacing = 0.3.sp,
-                                    maxLines = 1
+                                    letterSpacing = 0.2.sp,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -1671,13 +1933,13 @@ fun CameraScreen(
                 }
             }
 
-            // Modernised 5-Item Bottom Action Row: Collection | Locations | Dual-Ring Shutter | File Name | Template
+            // Responsive 5-Item Bottom Action Row: Collection | Locations | Dual-Ring Shutter | File Name | Template
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 // 1. Collection (circular glass photo pod -> Gallery)
                 val thumbInteraction = remember { MutableInteractionSource() }
@@ -1689,9 +1951,10 @@ fun CameraScreen(
                 )
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(metrics.podSpacing),
                     modifier = Modifier
-                        .width(64.dp)
+                        .weight(1f)
+                        .widthIn(min = 44.dp)
                         .scale(thumbScale)
                         .clip(RoundedCornerShape(14.dp))
                         .clickable(
@@ -1701,12 +1964,12 @@ fun CameraScreen(
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onOpenGallery()
                         }
-                        .padding(vertical = 3.dp)
+                        .padding(vertical = 3.dp, horizontal = 2.dp)
                         .testTag("camera_gallery_thumb_button")
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(metrics.podCircleSize)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.10f))
                             .border(
@@ -1728,16 +1991,17 @@ fun CameraScreen(
                                 imageVector = Icons.Rounded.Collections,
                                 contentDescription = "Open photo collection",
                                 tint = Color.White,
-                                modifier = Modifier.size(21.dp)
+                                modifier = Modifier.size(metrics.podIconSize)
                             )
                         }
                     }
                     Text(
                         text = stringResource(R.string.camera_collection),
                         color = Color.White.copy(alpha = 0.90f),
-                        fontSize = 10.sp,
+                        fontSize = metrics.podLabelFontSize,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
+                        softWrap = false,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1748,11 +2012,17 @@ fun CameraScreen(
                     label = stringResource(R.string.camera_locations),
                     active = stampConfig.useManualLocation,
                     activeColor = TelemetryEmerald,
+                    podCircleSize = metrics.podCircleSize,
+                    iconSize = metrics.podIconSize,
+                    labelFontSize = metrics.podLabelFontSize,
+                    podSpacing = metrics.podSpacing,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onOpenLocations()
                     },
-                    modifier = Modifier.testTag("camera_locations_button")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("camera_locations_button")
                 )
 
                 // 3. Signature Multi-Ring Pro Shutter / Auto Capture / Video Button
@@ -1777,124 +2047,101 @@ fun CameraScreen(
                     else -> Brush.verticalGradient(listOf(Color(0xFFFFD54F), ShutterGold))
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(metrics.shutterOuterSize)
+                        .scale(shutterScale),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(80.dp)
-                            .scale(shutterScale),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Animated Progress Sweep Ring for Auto Capture
-                        if (hudState.isAutoCapturing && autoCaptureProgress > 0f) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawArc(
-                                    color = TelemetryEmerald,
-                                    startAngle = -90f,
-                                    sweepAngle = autoCaptureProgress * 360f,
-                                    useCenter = false,
-                                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(74.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.08f))
-                                .border(3.dp, outerBrush, CircleShape)
-                                .padding(6.dp)
-                                .clip(
-                                    if ((isVideoMode && hudState.isRecordingVideo) || hudState.isAutoCapturing) {
-                                        RoundedCornerShape(18.dp)
-                                    } else {
-                                        CircleShape
-                                    }
-                                )
-                                .background(innerBrush)
-                                .combinedClickable(
-                                    enabled = hasCameraPermission && !hudState.isCapturing,
-                                    onClick = { triggerPrimaryShutter(burstLongPress = false) },
-                                    onLongClick = {
-                                        if (!isVideoMode) {
-                                            triggerPrimaryShutter(burstLongPress = true)
-                                        }
-                                    }
-                                )
-                                .testTag("capture_shutter_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            when {
-                                hudState.isCapturing -> {
-                                    CircularProgressIndicator(
-                                        color = Color(0xFF141619),
-                                        strokeWidth = 2.5.dp,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
-                                (isVideoMode && hudState.isRecordingVideo) || hudState.isAutoCapturing -> {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Stop,
-                                        contentDescription = if (hudState.isAutoCapturing) "Stop Auto Capture" else "Stop recording",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                                isAutoMode -> {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MotionPhotosAuto,
-                                        contentDescription = "Start Auto Capture",
-                                        tint = Color(0xFF0A1410),
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
-                                isBurstMode && !isVideoMode -> {
-                                    Icon(
-                                        imageVector = Icons.Rounded.BurstMode,
-                                        contentDescription = "3-Shot Burst Shutter",
-                                        tint = Color(0xFF141619),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                                isVideoMode -> {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Videocam,
-                                        contentDescription = "Start Video Recording",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(25.dp)
-                                    )
-                                }
-                                else -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .border(1.8.dp, Color(0x45141619), CircleShape)
-                                    )
-                                }
-                            }
+                    // Animated Progress Sweep Ring for Auto Capture
+                    if (hudState.isAutoCapturing && autoCaptureProgress > 0f) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            drawArc(
+                                color = TelemetryEmerald,
+                                startAngle = -90f,
+                                sweepAngle = autoCaptureProgress * 360f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
                         }
                     }
 
-                    if (isVideoMode && hudState.isRecordingVideo) {
-                        ModernGlassCircleButton(
-                            icon = if (isVideoPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                            contentDescription = if (isVideoPaused) "Resume video recording" else "Pause video recording",
-                            active = isVideoPaused,
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                if (isVideoPaused) {
-                                    activeRecording?.resume()
-                                    isVideoPaused = false
+                    Box(
+                        modifier = Modifier
+                            .size(metrics.shutterInnerSize)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .border(3.dp, outerBrush, CircleShape)
+                            .padding(5.dp)
+                            .clip(
+                                if ((isVideoMode && hudState.isRecordingVideo) || hudState.isAutoCapturing) {
+                                    RoundedCornerShape(16.dp)
                                 } else {
-                                    activeRecording?.pause()
-                                    isVideoPaused = true
+                                    CircleShape
                                 }
-                            },
-                            testTag = "video_pause_resume_button"
-                        )
+                            )
+                            .background(innerBrush)
+                            .combinedClickable(
+                                enabled = hasCameraPermission && !hudState.isCapturing,
+                                onClick = { triggerPrimaryShutter(burstLongPress = false) },
+                                onLongClick = {
+                                    if (!isVideoMode) {
+                                        triggerPrimaryShutter(burstLongPress = true)
+                                    }
+                                }
+                            )
+                            .testTag("capture_shutter_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            hudState.isCapturing -> {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF141619),
+                                    strokeWidth = 2.5.dp,
+                                    modifier = Modifier.size(metrics.shutterIconSize)
+                                )
+                            }
+                            (isVideoMode && hudState.isRecordingVideo) || hudState.isAutoCapturing -> {
+                                Icon(
+                                    imageVector = Icons.Rounded.Stop,
+                                    contentDescription = if (hudState.isAutoCapturing) "Stop Auto Capture" else "Stop recording",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(metrics.shutterIconSize)
+                                )
+                            }
+                            isAutoMode -> {
+                                Icon(
+                                    imageVector = Icons.Rounded.MotionPhotosAuto,
+                                    contentDescription = "Start Auto Capture",
+                                    tint = Color(0xFF0A1410),
+                                    modifier = Modifier.size(metrics.shutterIconSize)
+                                )
+                            }
+                            isBurstMode && !isVideoMode -> {
+                                Icon(
+                                    imageVector = Icons.Rounded.BurstMode,
+                                    contentDescription = "3-Shot Burst Shutter",
+                                    tint = Color(0xFF141619),
+                                    modifier = Modifier.size(metrics.shutterIconSize)
+                                )
+                            }
+                            isVideoMode -> {
+                                Icon(
+                                    imageVector = Icons.Rounded.Videocam,
+                                    contentDescription = "Start Video Recording",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(metrics.shutterIconSize)
+                                )
+                            }
+                            else -> {
+                                Box(
+                                    modifier = Modifier
+                                        .size(metrics.shutterIconSize - 2.dp)
+                                        .border(1.8.dp, Color(0x45141619), CircleShape)
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -1903,11 +2150,17 @@ fun CameraScreen(
                     icon = Icons.Rounded.DriveFileRenameOutline,
                     label = stringResource(R.string.camera_file_name),
                     active = stampConfig.customFileNameEnabled,
+                    podCircleSize = metrics.podCircleSize,
+                    iconSize = metrics.podIconSize,
+                    labelFontSize = metrics.podLabelFontSize,
+                    podSpacing = metrics.podSpacing,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onOpenFileName()
                     },
-                    modifier = Modifier.testTag("camera_edit_note_btn")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("camera_edit_note_btn")
                 )
 
                 // 5. Template (tap to open picker, long-press to quick-cycle layout)
@@ -1915,6 +2168,10 @@ fun CameraScreen(
                     icon = Icons.Rounded.AutoAwesomeMosaic,
                     label = stringResource(R.string.camera_template),
                     active = false,
+                    podCircleSize = metrics.podCircleSize,
+                    iconSize = metrics.podIconSize,
+                    labelFontSize = metrics.podLabelFontSize,
+                    podSpacing = metrics.podSpacing,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onOpenTemplates()
@@ -1924,7 +2181,9 @@ fun CameraScreen(
                         viewModel.cycleStampTemplate()
                         viewModel.setStatusMessage("Switched Stamp Template")
                     },
-                    modifier = Modifier.testTag("camera_open_templates_btn")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("camera_open_templates_btn")
                 )
             }
 
@@ -1932,26 +2191,41 @@ fun CameraScreen(
         }
     }
 
-    // Root Scaffolded Camera Layout
-    Box(
+    // Root Scaffolded Camera Layout with Dynamic Responsive Sizing & Measured Toolbar/Deck Bounds
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        val density = LocalDensity.current
+        val metrics = remember(maxWidth, maxHeight) {
+            computeCameraResponsiveMetrics(maxWidth, maxHeight)
+        }
+        val topToolbarHeightDp = if (topToolbarHeightPx > 0) {
+            with(density) { topToolbarHeightPx.toDp() }
+        } else {
+            metrics.topBarHeight
+        }
+        val bottomDeckHeightDp = if (bottomDeckHeightPx > 0) {
+            with(density) { bottomDeckHeightPx.toDp() }
+        } else {
+            metrics.fallbackDeckHeight
+        }
+
         if (isFullScreenCamera) {
             Box(modifier = Modifier.fillMaxSize()) {
                 livePreviewContent(Modifier.fillMaxSize())
-                viewfinderOverlays(true)
+                viewfinderOverlays(true, metrics, topToolbarHeightDp, bottomDeckHeightDp)
             }
             Box(modifier = Modifier.align(Alignment.TopCenter)) {
-                topIconToolbar()
+                topIconToolbar(metrics)
             }
             Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                bottomCameraDeck()
+                bottomCameraDeck(metrics)
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                topIconToolbar()
+                topIconToolbar(metrics)
 
                 Box(
                     modifier = Modifier
@@ -2002,16 +2276,16 @@ fun CameraScreen(
                             Box(modifier = previewFrameModifier) {
                                 livePreviewContent(Modifier.fillMaxSize())
                             }
-                            viewfinderOverlays(false)
+                            viewfinderOverlays(false, metrics, 0.dp, 0.dp)
                         }
                     }
                 }
 
-                bottomCameraDeck()
+                bottomCameraDeck(metrics)
             }
         }
 
-        floatingToolsOverlay()
+        floatingToolsOverlay(topToolbarHeightDp)
     }
 
     // Quick Note Dialog (Brand label stays permanently locked to YVGPSCAM)
@@ -2091,11 +2365,18 @@ fun CameraScreen(
 private fun ZoomSelectorPill(
     zoomOptions: List<Float>,
     currentZoom: Float,
-    onSelectZoom: (Float) -> Unit
+    onSelectZoom: (Float) -> Unit,
+    itemMinWidth: Dp = 42.dp,
+    itemMinHeight: Dp = 38.dp,
+    circleSize: Dp = 30.dp,
+    fontSize: TextUnit = 10.sp
 ) {
     ModernFloatingCapsule(
         containerColor = Color(0xA60E141D),
         borderColor = Color.White.copy(alpha = 0.16f),
+        horizontalPadding = 3.dp,
+        verticalPadding = 2.dp,
+        itemSpacing = 1.dp,
         modifier = Modifier.testTag("camera_zoom_selector_pill")
     ) {
         zoomOptions.forEach { zoomVal ->
@@ -2108,22 +2389,24 @@ private fun ZoomSelectorPill(
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .defaultMinSize(minWidth = itemMinWidth, minHeight = itemMinHeight)
                     .clip(CircleShape)
                     .clickable { onSelectZoom(zoomVal) }
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(circleSize)
                         .clip(CircleShape)
                         .background(if (selected) ShutterGold else Color.Transparent)
                 ) {
                     Text(
                         text = label,
-                        fontSize = 10.sp,
+                        fontSize = fontSize,
                         fontWeight = FontWeight.Bold,
-                        color = if (selected) Color(0xFF141619) else Color.White
+                        color = if (selected) Color(0xFF141619) else Color.White,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -2241,7 +2524,11 @@ private fun CompactGpsStatusPill(
     isDeviceLocationEnabled: Boolean,
     hasLocationPermission: Boolean,
     onTapAction: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 9.5.sp,
+    iconSize: Dp = 13.dp,
+    horizontalPadding: Dp = 10.dp,
+    verticalPadding: Dp = 5.dp
 ) {
     val satSuffix = when {
         satellitesUsed > 0 -> " • ${satellitesUsed}sat"
@@ -2250,7 +2537,7 @@ private fun CompactGpsStatusPill(
     }
     val (gpsIcon, gpsColor, gpsLabel) = when {
         !hasLocationPermission -> Triple(Icons.Rounded.GpsOff, MaterialTheme.colorScheme.error, "TAP GPS")
-        !isDeviceLocationEnabled -> Triple(Icons.Rounded.GpsOff, ShutterGold, "GPS OFF · TAP")
+        !isDeviceLocationEnabled -> Triple(Icons.Rounded.GpsOff, ShutterGold, "GPS OFF")
         signalState == GpsSignalState.LOCKED -> Triple(Icons.Rounded.MyLocation, TelemetryEmerald, "±${accuracyMeters?.roundToInt() ?: 0}m$satSuffix")
         signalState == GpsSignalState.COARSE -> Triple(Icons.Rounded.LocationSearching, ShutterGold, "±${accuracyMeters?.roundToInt() ?: 0}m$satSuffix")
         else -> Triple(Icons.Rounded.LocationSearching, ShutterGold, if (satellitesVisible > 0) "SYNC $satellitesUsed/$satellitesVisible" else "GPS SYNC")
@@ -2268,18 +2555,21 @@ private fun CompactGpsStatusPill(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding)
         ) {
-            Icon(gpsIcon, contentDescription = "GPS status", tint = gpsColor, modifier = Modifier.size(13.dp))
+            Icon(gpsIcon, contentDescription = "GPS status", tint = gpsColor, modifier = Modifier.size(iconSize))
             Text(
                 text = gpsLabel,
                 fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.5.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
-                color = gpsColor
+                color = gpsColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
             if (offlineOnly) {
-                Icon(Icons.Rounded.OfflinePin, contentDescription = "Offline map mode", tint = ShutterGold, modifier = Modifier.size(11.dp))
+                Icon(Icons.Rounded.OfflinePin, contentDescription = "Offline map mode", tint = ShutterGold, modifier = Modifier.size(iconSize - 1.dp))
             }
         }
     }
@@ -2289,7 +2579,10 @@ private fun CompactGpsStatusPill(
 internal fun CameraOfflineSyncStatusIcon(
     state: CameraSyncIndicatorState,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 13.dp,
+    fontSize: TextUnit = 9.sp,
+    verticalPadding: Dp = 5.dp
 ) {
     val targetTint = when (state.mode) {
         CameraConnectivitySyncMode.OFFLINE_MODE -> AlertCoral
@@ -2312,46 +2605,43 @@ internal fun CameraOfflineSyncStatusIcon(
         CameraConnectivitySyncMode.ONLINE_SYNCED -> stringResource(R.string.camera_status_online_synced)
     }
 
-    Box(
-        contentAlignment = Alignment.Center,
+    Surface(
+        color = Color(0xAA0C1119),
+        shape = CircleShape,
         modifier = modifier
-            .minimumInteractiveComponentSize()
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .testTag("camera_offline_sync_status_icon")
-    ) {
-        Surface(
-            color = Color(0xAA0C1119),
-            shape = CircleShape,
-            modifier = Modifier.border(
+            .border(
                 width = 1.dp,
                 color = animatedTint.copy(alpha = 0.72f),
                 shape = CircleShape
             )
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .testTag("camera_offline_sync_status_icon")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            modifier = Modifier.padding(
+                horizontal = if (state.pendingCount > 0 && state.mode != CameraConnectivitySyncMode.ONLINE_SYNCED) 7.dp else 6.dp,
+                vertical = verticalPadding
+            )
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                modifier = Modifier.padding(
-                    horizontal = if (state.pendingCount > 0) 7.dp else 6.dp,
-                    vertical = 5.dp
+            Icon(
+                imageVector = statusIcon,
+                contentDescription = statusDescription,
+                tint = animatedTint,
+                modifier = Modifier.size(iconSize)
+            )
+            if (state.pendingCount > 0 && state.mode != CameraConnectivitySyncMode.ONLINE_SYNCED) {
+                Text(
+                    text = state.pendingCount.coerceAtMost(99).toString(),
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.Bold,
+                    color = animatedTint,
+                    maxLines = 1,
+                    softWrap = false
                 )
-            ) {
-                Icon(
-                    imageVector = statusIcon,
-                    contentDescription = statusDescription,
-                    tint = animatedTint,
-                    modifier = Modifier.size(13.dp)
-                )
-                if (state.pendingCount > 0 && state.mode != CameraConnectivitySyncMode.ONLINE_SYNCED) {
-                    Text(
-                        text = state.pendingCount.coerceAtMost(99).toString(),
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = animatedTint
-                    )
-                }
             }
         }
     }
@@ -2360,7 +2650,11 @@ internal fun CameraOfflineSyncStatusIcon(
 @Composable
 private fun ViewfinderOrientationStatusPill(
     orientation: DeviceCaptureOrientation,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 9.5.sp,
+    iconSize: Dp = 13.dp,
+    horizontalPadding: Dp = 9.dp,
+    verticalPadding: Dp = 5.dp
 ) {
     val isLandscape = orientation.isLandscape
     val accent = if (isLandscape) ShutterGold else Color.White
@@ -2380,29 +2674,32 @@ private fun ViewfinderOrientationStatusPill(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding)
         ) {
             Icon(
                 imageVector = Icons.Rounded.ScreenRotation,
                 contentDescription = "Auto-rotate active",
                 tint = accent.copy(alpha = 0.85f),
-                modifier = Modifier.size(12.dp)
+                modifier = Modifier.size(iconSize - 1.dp)
             )
             Icon(
                 imageVector = Icons.Rounded.StayCurrentPortrait,
                 contentDescription = if (isLandscape) "Phone held in landscape orientation" else "Phone held in portrait orientation",
                 tint = accent,
                 modifier = Modifier
-                    .size(13.dp)
+                    .size(iconSize)
                     .graphicsLayer { rotationZ = animatedAngle }
             )
             Text(
                 text = orientation.label,
                 fontFamily = JetBrainsMonoFontFamily,
-                fontSize = 9.5.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
-                color = accent
+                color = accent,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

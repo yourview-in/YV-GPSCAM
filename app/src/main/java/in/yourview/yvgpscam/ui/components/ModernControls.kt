@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -38,6 +40,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import `in`.yourview.yvgpscam.ui.theme.ShutterGold
@@ -50,6 +53,9 @@ fun ModernFloatingCapsule(
     modifier: Modifier = Modifier,
     containerColor: Color = Color(0x99121822),
     borderColor: Color = Color.White.copy(alpha = 0.16f),
+    horizontalPadding: Dp = 4.dp,
+    verticalPadding: Dp = 3.dp,
+    itemSpacing: Dp = 2.dp,
     content: @Composable RowScope.() -> Unit
 ) {
     Row(
@@ -64,9 +70,9 @@ fun ModernFloatingCapsule(
                 )
             )
             .border(0.9.dp, borderColor, CircleShape)
-            .padding(horizontal = 4.dp, vertical = 3.dp),
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(itemSpacing),
         content = content
     )
 }
@@ -83,6 +89,7 @@ fun ModernGlassCircleButton(
     active: Boolean = false,
     activeColor: Color = ShutterGold,
     inactiveIconTint: Color = Color.White,
+    touchSize: Dp = 48.dp,
     buttonSize: Dp = 42.dp,
     iconSize: Dp = 20.dp,
     standaloneGlass: Boolean = true,
@@ -91,6 +98,7 @@ fun ModernGlassCircleButton(
     badgeText: String? = null,
     testTag: String? = null
 ) {
+    val effectiveTouchSize = maxOf(touchSize, buttonSize)
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -123,7 +131,7 @@ fun ModernGlassCircleButton(
 
     Box(
         modifier = rootMod
-            .size(48.dp)
+            .size(effectiveTouchSize)
             .scale(pressScale)
             .clip(CircleShape)
             .clickable(
@@ -159,8 +167,8 @@ fun ModernGlassCircleButton(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 5.dp, end = 5.dp)
-                    .size(8.dp)
+                    .padding(top = 3.dp, end = 3.dp)
+                    .size(7.dp)
                     .clip(CircleShape)
                     .background(badgeDotColor)
                     .border(1.2.dp, Color(0xFF0E131A), CircleShape)
@@ -173,14 +181,14 @@ fun ModernGlassCircleButton(
                 shape = CircleShape,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 2.dp, bottom = 2.dp)
+                    .padding(end = 1.dp, bottom = 1.dp)
             ) {
                 Text(
                     text = badgeText,
-                    fontSize = 7.sp,
+                    fontSize = 6.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF141619),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 0.5.dp)
+                    modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 0.5.dp)
                 )
             }
         }
@@ -199,6 +207,11 @@ fun ModernDeckPodButton(
     modifier: Modifier = Modifier,
     active: Boolean = false,
     activeColor: Color = ShutterGold,
+    podCircleSize: Dp = 46.dp,
+    iconSize: Dp = 21.dp,
+    labelFontSize: TextUnit = 10.sp,
+    podSpacing: Dp = 4.dp,
+    fixedWidth: Dp? = null,
     onLongClick: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -220,9 +233,11 @@ fun ModernDeckPodButton(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(podSpacing),
         modifier = modifier
-            .width(64.dp)
+            .then(
+                if (fixedWidth != null) Modifier.width(fixedWidth) else Modifier.widthIn(min = 44.dp)
+            )
             .scale(pressScale)
             .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
@@ -231,11 +246,11 @@ fun ModernDeckPodButton(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
-            .padding(vertical = 3.dp)
+            .padding(vertical = 3.dp, horizontal = 2.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(46.dp)
+                .size(podCircleSize)
                 .clip(CircleShape)
                 .background(podBrush)
                 .border(
@@ -249,15 +264,16 @@ fun ModernDeckPodButton(
                 imageVector = icon,
                 contentDescription = label,
                 tint = if (active) activeColor else Color.White,
-                modifier = Modifier.size(21.dp)
+                modifier = Modifier.size(iconSize)
             )
         }
         Text(
             text = label,
             color = if (active) activeColor else Color.White.copy(alpha = 0.90f),
-            fontSize = 10.sp,
+            fontSize = labelFontSize,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -274,6 +290,11 @@ fun ModernMiniTogglePill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     activeColor: Color = ShutterGold,
+    horizontalPadding: Dp = 10.dp,
+    verticalPadding: Dp = 6.dp,
+    iconSize: Dp = 14.dp,
+    fontSize: TextUnit = 10.5.sp,
+    minHeight: Dp = 32.dp,
     testTag: String? = null
 ) {
     val bg by animateColorAsState(
@@ -291,27 +312,29 @@ fun ModernMiniTogglePill(
         color = bg,
         shape = CircleShape,
         modifier = mod
+            .defaultMinSize(minHeight = minHeight)
             .border(0.9.dp, border, CircleShape)
             .clip(CircleShape)
             .clickable(onClick = onClick)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
                 tint = fg,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(iconSize)
             )
             Spacer(Modifier.width(4.dp))
             Text(
                 text = label,
-                fontSize = 10.5.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
                 color = fg,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -78,6 +79,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import `in`.yourview.yvgpscam.R
@@ -147,135 +150,196 @@ fun CameraQuickToolsDrawer(
             )
             .testTag("camera_quick_tools_drawer")
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Row 1: Ratio | Grid | Timer | Full View
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                QuickToolTile(
-                    icon = Icons.Rounded.AspectRatio,
-                    label = "Ratio ${hudState.aspectRatio.label}",
-                    active = hudState.aspectRatio.label != "3:4",
-                    onClick = onCycleRatio,
-                    testTag = "quick_tool_ratio",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.Grid4x4,
-                    label = stringResource(R.string.camera_tool_grid),
-                    active = hudState.showGrid,
-                    onClick = onToggleGrid,
-                    testTag = "quick_tool_grid",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.Timer,
-                    label = if (config.timerDelaySeconds > 0) {
-                        "${stringResource(R.string.camera_tool_timer)} ${config.timerDelaySeconds}s"
-                    } else {
-                        stringResource(R.string.camera_tool_timer)
-                    },
-                    active = config.timerDelaySeconds > 0,
-                    onClick = onCycleTimer,
-                    testTag = "quick_tool_timer",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = if (hudState.isFullScreenCamera) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
-                    label = stringResource(R.string.camera_tool_full_view),
-                    active = hudState.isFullScreenCamera,
-                    onClick = onToggleFullView,
-                    testTag = "quick_tool_full_view",
-                    modifier = Modifier.weight(1f)
-                )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val isCompact = maxWidth < 360.dp
+            val isMedium = maxWidth < 410.dp
+            val tileCircleSize = when {
+                isCompact -> 36.dp
+                isMedium -> 40.dp
+                else -> 44.dp
             }
+            val tileIconSize = when {
+                isCompact -> 17.dp
+                isMedium -> 19.dp
+                else -> 20.dp
+            }
+            val tileLabelSize = when {
+                isCompact -> 9.sp
+                isMedium -> 9.5.sp
+                else -> 10.sp
+            }
+            val drawerSpacing = if (isCompact) 8.dp else 12.dp
+            val drawerPaddingH = if (isCompact) 8.dp else 12.dp
+            val drawerPaddingV = if (isCompact) 10.dp else 14.dp
+            val pillMinHeight = if (isCompact) 42.dp else 46.dp
+            val pillFontSize = if (isCompact) 11.sp else 12.sp
+            val pillHPadding = if (isCompact) 8.dp else 12.dp
 
-            // Row 2: Auto Capture | Burst | Torch | Level
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = drawerPaddingH, vertical = drawerPaddingV),
+                verticalArrangement = Arrangement.spacedBy(drawerSpacing)
             ) {
-                QuickToolTile(
-                    icon = Icons.Rounded.MotionPhotosAuto,
-                    label = if (isAutoCaptureMode) "Auto ${hudState.autoCaptureIntervalSeconds}s" else stringResource(R.string.camera_tool_auto_cap),
-                    active = isAutoCaptureMode,
-                    activeColor = TelemetryEmerald,
-                    onClick = onToggleAutoCapture,
-                    testTag = "quick_tool_auto_capture",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.BurstMode,
-                    label = if (isBurstMode) "3x ${stringResource(R.string.camera_tool_burst)}" else stringResource(R.string.camera_tool_burst),
-                    active = isBurstMode,
-                    onClick = onToggleBurstMode,
-                    testTag = "quick_tool_burst",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = if (isTorchEnabled) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
-                    label = if (isTorchEnabled) "${stringResource(R.string.camera_tool_torch)} ON" else stringResource(R.string.camera_tool_torch),
-                    active = isTorchEnabled,
-                    onClick = onToggleTorch,
-                    testTag = "quick_tool_torch",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.ScreenRotation,
-                    label = stringResource(R.string.camera_tool_level),
-                    active = config.showDigitalLevel,
-                    onClick = onToggleLevel,
-                    testTag = "quick_tool_level",
-                    modifier = Modifier.weight(1f)
-                )
-            }
+                // Row 1: Ratio | Grid | Timer | Full View
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    QuickToolTile(
+                        icon = Icons.Rounded.AspectRatio,
+                        label = "Ratio ${hudState.aspectRatio.label}",
+                        active = hudState.aspectRatio.label != "3:4",
+                        onClick = onCycleRatio,
+                        testTag = "quick_tool_ratio",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.Grid4x4,
+                        label = stringResource(R.string.camera_tool_grid),
+                        active = hudState.showGrid,
+                        onClick = onToggleGrid,
+                        testTag = "quick_tool_grid",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.Timer,
+                        label = if (config.timerDelaySeconds > 0) {
+                            "${stringResource(R.string.camera_tool_timer)} ${config.timerDelaySeconds}s"
+                        } else {
+                            stringResource(R.string.camera_tool_timer)
+                        },
+                        active = config.timerDelaySeconds > 0,
+                        onClick = onCycleTimer,
+                        testTag = "quick_tool_timer",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = if (hudState.isFullScreenCamera) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                        label = stringResource(R.string.camera_tool_full_view),
+                        active = hudState.isFullScreenCamera,
+                        onClick = onToggleFullView,
+                        testTag = "quick_tool_full_view",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
 
-            // Row 3: Mirror | Voice | Map Style | Offline
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                QuickToolTile(
-                    icon = Icons.Rounded.Flip,
-                    label = stringResource(R.string.camera_tool_mirror),
-                    active = config.mirrorFrontCamera,
-                    onClick = onToggleMirror,
-                    testTag = "quick_tool_mirror",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = if (config.recordVideoWithVoice) Icons.Rounded.Mic else Icons.Rounded.MicOff,
-                    label = stringResource(R.string.camera_tool_voice),
-                    active = config.recordVideoWithVoice,
-                    onClick = onToggleVoice,
-                    testTag = "quick_tool_voice",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.Layers,
-                    label = config.mapStyle.displayName,
-                    active = config.mapStyle.name != "STANDARD",
-                    onClick = onCycleMapStyle,
-                    testTag = "quick_tool_map_style",
-                    modifier = Modifier.weight(1f)
-                )
-                QuickToolTile(
-                    icon = Icons.Rounded.OfflinePin,
-                    label = if (config.offlineOnlyMapMode) "${stringResource(R.string.camera_tool_offline)} ON" else stringResource(R.string.camera_tool_offline),
-                    active = config.offlineOnlyMapMode,
-                    activeColor = TelemetryEmerald,
-                    onClick = onToggleOfflineMapMode,
-                    testTag = "quick_tool_offline_map",
-                    modifier = Modifier.weight(1f)
-                )
-            }
+                // Row 2: Auto Capture | Burst | Torch | Level
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    QuickToolTile(
+                        icon = Icons.Rounded.MotionPhotosAuto,
+                        label = if (isAutoCaptureMode) "Auto ${hudState.autoCaptureIntervalSeconds}s" else stringResource(R.string.camera_tool_auto_cap),
+                        active = isAutoCaptureMode,
+                        activeColor = TelemetryEmerald,
+                        onClick = onToggleAutoCapture,
+                        testTag = "quick_tool_auto_capture",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.BurstMode,
+                        label = if (isBurstMode) "3x ${stringResource(R.string.camera_tool_burst)}" else stringResource(R.string.camera_tool_burst),
+                        active = isBurstMode,
+                        onClick = onToggleBurstMode,
+                        testTag = "quick_tool_burst",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = if (isTorchEnabled) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
+                        label = if (isTorchEnabled) "${stringResource(R.string.camera_tool_torch)} ON" else stringResource(R.string.camera_tool_torch),
+                        active = isTorchEnabled,
+                        onClick = onToggleTorch,
+                        testTag = "quick_tool_torch",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.ScreenRotation,
+                        label = stringResource(R.string.camera_tool_level),
+                        active = config.showDigitalLevel,
+                        onClick = onToggleLevel,
+                        testTag = "quick_tool_level",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Row 3: Mirror | Voice | Map Style | Offline
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    QuickToolTile(
+                        icon = Icons.Rounded.Flip,
+                        label = stringResource(R.string.camera_tool_mirror),
+                        active = config.mirrorFrontCamera,
+                        onClick = onToggleMirror,
+                        testTag = "quick_tool_mirror",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = if (config.recordVideoWithVoice) Icons.Rounded.Mic else Icons.Rounded.MicOff,
+                        label = stringResource(R.string.camera_tool_voice),
+                        active = config.recordVideoWithVoice,
+                        onClick = onToggleVoice,
+                        testTag = "quick_tool_voice",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.Layers,
+                        label = config.mapStyle.displayName,
+                        active = config.mapStyle.name != "STANDARD",
+                        onClick = onCycleMapStyle,
+                        testTag = "quick_tool_map_style",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToolTile(
+                        icon = Icons.Rounded.OfflinePin,
+                        label = if (config.offlineOnlyMapMode) "${stringResource(R.string.camera_tool_offline)} ON" else stringResource(R.string.camera_tool_offline),
+                        active = config.offlineOnlyMapMode,
+                        activeColor = TelemetryEmerald,
+                        onClick = onToggleOfflineMapMode,
+                        testTag = "quick_tool_offline_map",
+                        circleSize = tileCircleSize,
+                        iconSize = tileIconSize,
+                        labelFontSize = tileLabelSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
 
             // Exposure Compensation Bar (shown when camera hardware exposes EV range)
             if (maxExposureIndex > minExposureIndex) {
@@ -339,56 +403,69 @@ fun CameraQuickToolsDrawer(
                 }
             }
 
-            // Bottom Balanced 2x2 Pill Action Grid (full labels, zero truncation, 48dp touch height)
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
+                // Bottom Balanced 2x2 Pill Action Grid (responsive sizing, zero truncation/overlap)
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    DrawerPillButton(
-                        icon = Icons.Rounded.AddLocationAlt,
-                        label = "Pos: ${config.stampPosition.shortLabel}",
-                        accent = Color.White,
-                        onClick = onCycleStampPosition,
-                        testTag = "camera_stamp_position_button",
-                        modifier = Modifier.weight(1f)
-                    )
-                    DrawerPillButton(
-                        icon = Icons.Rounded.EditNote,
-                        label = if (config.customNote.isNotBlank()) {
-                            stringResource(R.string.camera_pill_note_added)
-                        } else {
-                            stringResource(R.string.camera_pill_add_text)
-                        },
-                        accent = if (config.customNote.isNotBlank()) ShutterGold else Color.White,
-                        onClick = onOpenNoteDialog,
-                        testTag = "quick_tool_note",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    DrawerPillButton(
-                        icon = Icons.Rounded.Collections,
-                        label = stringResource(R.string.camera_pill_stamp_photo),
-                        accent = ShutterGold,
-                        onClick = onImportPhoto,
-                        testTag = "quick_tool_import",
-                        modifier = Modifier.weight(1f)
-                    )
-                    DrawerPillButton(
-                        icon = Icons.Rounded.CloudUpload,
-                        label = stringResource(R.string.camera_pill_google_drive),
-                        accent = TelemetryEmerald,
-                        onClick = onOpenDriveSync,
-                        testTag = "quick_tool_drive",
-                        modifier = Modifier.weight(1f)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        DrawerPillButton(
+                            icon = Icons.Rounded.AddLocationAlt,
+                            label = "Pos: ${config.stampPosition.shortLabel}",
+                            accent = Color.White,
+                            onClick = onCycleStampPosition,
+                            testTag = "camera_stamp_position_button",
+                            minHeight = pillMinHeight,
+                            fontSize = pillFontSize,
+                            horizontalPadding = pillHPadding,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DrawerPillButton(
+                            icon = Icons.Rounded.EditNote,
+                            label = if (config.customNote.isNotBlank()) {
+                                stringResource(R.string.camera_pill_note_added)
+                            } else {
+                                stringResource(R.string.camera_pill_add_text)
+                            },
+                            accent = if (config.customNote.isNotBlank()) ShutterGold else Color.White,
+                            onClick = onOpenNoteDialog,
+                            testTag = "quick_tool_note",
+                            minHeight = pillMinHeight,
+                            fontSize = pillFontSize,
+                            horizontalPadding = pillHPadding,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        DrawerPillButton(
+                            icon = Icons.Rounded.Collections,
+                            label = stringResource(R.string.camera_pill_stamp_photo),
+                            accent = ShutterGold,
+                            onClick = onImportPhoto,
+                            testTag = "quick_tool_import",
+                            minHeight = pillMinHeight,
+                            fontSize = pillFontSize,
+                            horizontalPadding = pillHPadding,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DrawerPillButton(
+                            icon = Icons.Rounded.CloudUpload,
+                            label = stringResource(R.string.camera_pill_google_drive),
+                            accent = TelemetryEmerald,
+                            onClick = onOpenDriveSync,
+                            testTag = "quick_tool_drive",
+                            minHeight = pillMinHeight,
+                            fontSize = pillFontSize,
+                            horizontalPadding = pillHPadding,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
@@ -402,20 +479,23 @@ private fun DrawerPillButton(
     accent: Color,
     onClick: () -> Unit,
     testTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    minHeight: Dp = 46.dp,
+    fontSize: TextUnit = 12.sp,
+    horizontalPadding: Dp = 12.dp
 ) {
     Surface(
         color = Color.White.copy(alpha = 0.08f),
         shape = CircleShape,
         modifier = modifier
-            .heightIn(min = 48.dp)
+            .heightIn(min = minHeight)
             .clip(CircleShape)
             .border(0.9.dp, accent.copy(alpha = 0.34f), CircleShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -425,11 +505,11 @@ private fun DrawerPillButton(
                 tint = accent,
                 modifier = Modifier.size(16.dp)
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Text(
                 text = label,
                 color = Color.White,
-                fontSize = 12.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 softWrap = false,
@@ -447,7 +527,10 @@ private fun QuickToolTile(
     onClick: () -> Unit,
     testTag: String,
     modifier: Modifier = Modifier,
-    activeColor: Color = ShutterGold
+    activeColor: Color = ShutterGold,
+    circleSize: Dp = 44.dp,
+    iconSize: Dp = 20.dp,
+    labelFontSize: TextUnit = 10.sp
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -463,7 +546,7 @@ private fun QuickToolTile(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = modifier
             .scale(scale)
             .clip(RoundedCornerShape(14.dp))
@@ -477,7 +560,7 @@ private fun QuickToolTile(
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(circleSize)
                 .clip(CircleShape)
                 .background(podColor)
                 .border(
@@ -491,16 +574,17 @@ private fun QuickToolTile(
                 imageVector = icon,
                 contentDescription = label,
                 tint = if (active) Color(0xFF141619) else Color.White,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(iconSize)
             )
         }
         Text(
             text = label,
-            fontSize = 10.sp,
+            fontSize = labelFontSize,
             color = if (active) activeColor else Color.White.copy(alpha = 0.9f),
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             textAlign = TextAlign.Center,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
     }

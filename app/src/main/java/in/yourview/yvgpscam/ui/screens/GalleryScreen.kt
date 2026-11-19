@@ -354,89 +354,139 @@ fun GalleryScreen(
                         }
                     }
                 } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ModernGlassCircleButton(
-                                icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                                contentDescription = "Back to camera",
-                                inactiveIconTint = MaterialTheme.colorScheme.onSurface,
-                                onClick = onGoToCamera,
-                                testTag = "gallery_back_to_camera_button"
-                            )
-                            Image(
-                                painter = painterResource(id = R.drawable.img_brand_yv_logo),
-                                contentDescription = "YVGPSCAM Brand Logo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .border(1.2.dp, TelemetryEmerald.copy(alpha = 0.45f), CircleShape)
-                            )
-                            Column {
-                                Text(
-                                    text = "Collection",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "${photos.size} geotagged",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 10.5.sp,
-                                    color = TelemetryEmerald
-                                )
-                            }
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        val isCompact = maxWidth < 370.dp
+                        val isMedium = maxWidth < 420.dp
+                        val navTouch = when {
+                            isCompact -> 38.dp
+                            isMedium -> 42.dp
+                            else -> 46.dp
+                        }
+                        val navVisual = when {
+                            isCompact -> 34.dp
+                            isMedium -> 38.dp
+                            else -> 42.dp
+                        }
+                        val actionTouch = when {
+                            isCompact -> 34.dp
+                            isMedium -> 38.dp
+                            else -> 42.dp
+                        }
+                        val actionVisual = when {
+                            isCompact -> 30.dp
+                            isMedium -> 34.dp
+                            else -> 38.dp
+                        }
+                        val actionIcon = when {
+                            isCompact -> 17.dp
+                            isMedium -> 18.dp
+                            else -> 20.dp
                         }
 
-                        ModernFloatingCapsule(
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                            borderColor = MaterialTheme.colorScheme.outline
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = if (isCompact) 8.dp else 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            ModernGlassCircleButton(
-                                icon = Icons.Rounded.TravelExplore,
-                                contentDescription = "Open In-App Map",
-                                inactiveIconTint = TelemetryEmerald,
-                                standaloneGlass = false,
-                                buttonSize = 38.dp,
-                                onClick = onOpenImageOnMap,
-                                testTag = "gallery_open_google_map_button"
-                            )
-                            ModernGlassCircleButton(
-                                icon = Icons.Rounded.CloudUpload,
-                                contentDescription = "Cloud Backup",
-                                inactiveIconTint = ShutterGold,
-                                standaloneGlass = false,
-                                buttonSize = 38.dp,
-                                onClick = onOpenCloudSync,
-                                testTag = "gallery_cloud_sync_button"
-                            )
-                            ModernGlassCircleButton(
-                                icon = if (viewMode == GalleryViewMode.GRID) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
-                                contentDescription = "Toggle grid or list layout",
-                                inactiveIconTint = MaterialTheme.colorScheme.onSurface,
-                                standaloneGlass = false,
-                                buttonSize = 38.dp,
-                                onClick = { galleryViewModel.toggleViewMode() },
-                                testTag = "gallery_toggle_layout_button"
-                            )
-                            if (photos.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 8.dp)
+                            ) {
                                 ModernGlassCircleButton(
-                                    icon = Icons.Rounded.Checklist,
-                                    contentDescription = "Select multiple photos",
+                                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                                    contentDescription = "Back to camera",
+                                    inactiveIconTint = MaterialTheme.colorScheme.onSurface,
+                                    touchSize = navTouch,
+                                    buttonSize = navVisual,
+                                    iconSize = actionIcon,
+                                    onClick = onGoToCamera,
+                                    testTag = "gallery_back_to_camera_button"
+                                )
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_brand_yv_logo),
+                                    contentDescription = "YVGPSCAM Brand Logo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(if (isCompact) 28.dp else 34.dp)
+                                        .clip(CircleShape)
+                                        .border(1.2.dp, TelemetryEmerald.copy(alpha = 0.45f), CircleShape)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Collection",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontSize = if (isCompact) 14.sp else 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${photos.size} geotagged",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = if (isCompact) 9.5.sp else 10.5.sp,
+                                        color = TelemetryEmerald,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            ModernFloatingCapsule(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                                borderColor = MaterialTheme.colorScheme.outline,
+                                horizontalPadding = if (isCompact) 2.dp else 4.dp,
+                                verticalPadding = if (isCompact) 2.dp else 3.dp,
+                                itemSpacing = if (isCompact) 0.dp else 2.dp
+                            ) {
+                                ModernGlassCircleButton(
+                                    icon = Icons.Rounded.TravelExplore,
+                                    contentDescription = "Open In-App Map",
+                                    inactiveIconTint = TelemetryEmerald,
+                                    standaloneGlass = false,
+                                    touchSize = actionTouch,
+                                    buttonSize = actionVisual,
+                                    iconSize = actionIcon,
+                                    onClick = onOpenImageOnMap,
+                                    testTag = "gallery_open_google_map_button"
+                                )
+                                ModernGlassCircleButton(
+                                    icon = Icons.Rounded.CloudUpload,
+                                    contentDescription = "Cloud Backup",
+                                    inactiveIconTint = ShutterGold,
+                                    standaloneGlass = false,
+                                    touchSize = actionTouch,
+                                    buttonSize = actionVisual,
+                                    iconSize = actionIcon,
+                                    onClick = onOpenCloudSync,
+                                    testTag = "gallery_cloud_sync_button"
+                                )
+                                ModernGlassCircleButton(
+                                    icon = if (viewMode == GalleryViewMode.GRID) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
+                                    contentDescription = "Toggle grid or list layout",
                                     inactiveIconTint = MaterialTheme.colorScheme.onSurface,
                                     standaloneGlass = false,
-                                    buttonSize = 38.dp,
-                                    onClick = { galleryViewModel.enterSelectionMode() },
-                                    testTag = "gallery_enter_select_mode_button"
+                                    touchSize = actionTouch,
+                                    buttonSize = actionVisual,
+                                    iconSize = actionIcon,
+                                    onClick = { galleryViewModel.toggleViewMode() },
+                                    testTag = "gallery_toggle_layout_button"
                                 )
+                                if (photos.isNotEmpty()) {
+                                    ModernGlassCircleButton(
+                                        icon = Icons.Rounded.Checklist,
+                                        contentDescription = "Select multiple photos",
+                                        inactiveIconTint = MaterialTheme.colorScheme.onSurface,
+                                        standaloneGlass = false,
+                                        touchSize = actionTouch,
+                                        buttonSize = actionVisual,
+                                        iconSize = actionIcon,
+                                        onClick = { galleryViewModel.enterSelectionMode() },
+                                        testTag = "gallery_enter_select_mode_button"
+                                    )
+                                }
                             }
                         }
                     }

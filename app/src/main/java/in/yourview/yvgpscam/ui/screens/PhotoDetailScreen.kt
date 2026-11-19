@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -93,6 +94,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -530,85 +532,102 @@ fun PhotoDetailScreen(
             .navigationBarsPadding()
     ) {
         // Top Action Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val isCompact = maxWidth < 370.dp
+            val actionTouch = if (isCompact) 36.dp else 42.dp
+            val actionVisual = if (isCompact) 32.dp else 38.dp
+            val actionIcon = if (isCompact) 18.dp else 20.dp
+
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (showBackButton) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("detail_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to gallery"
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (showBackButton) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .size(if (isCompact) 42.dp else 48.dp)
+                                .testTag("detail_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to gallery"
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.padding(start = if (showBackButton) 0.dp else 8.dp)) {
+                        Text(
+                            text = currentPhoto.displayName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontSize = if (isCompact) 14.sp else 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val pageCounter = if (pagerPhotos.size > 1) {
+                            "${pagerState.currentPage + 1}/${pagerPhotos.size} • "
+                        } else {
+                            ""
+                        }
+                        Text(
+                            text = "$pageCounter${currentPhoto.width}×${currentPhoto.height} px • ${currentPhoto.templateName}",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = if (isCompact) 9.sp else 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                Column(modifier = Modifier.padding(start = if (showBackButton) 0.dp else 8.dp)) {
-                    Text(
-                        text = currentPhoto.displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+
+                ModernFloatingCapsule(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    borderColor = MaterialTheme.colorScheme.outline,
+                    horizontalPadding = if (isCompact) 2.dp else 4.dp,
+                    verticalPadding = if (isCompact) 2.dp else 3.dp,
+                    itemSpacing = if (isCompact) 0.dp else 2.dp
+                ) {
+                    ModernGlassCircleButton(
+                        icon = Icons.Rounded.Fullscreen,
+                        contentDescription = "View full screen",
+                        inactiveIconTint = MaterialTheme.colorScheme.onSurface,
+                        standaloneGlass = false,
+                        touchSize = actionTouch,
+                        buttonSize = actionVisual,
+                        iconSize = actionIcon,
+                        onClick = { isFullScreenPhoto = true },
+                        testTag = "detail_top_fullscreen_button"
                     )
-                    val pageCounter = if (pagerPhotos.size > 1) {
-                        "${pagerState.currentPage + 1}/${pagerPhotos.size} • "
-                    } else {
-                        ""
-                    }
-                    Text(
-                        text = "$pageCounter${currentPhoto.width}×${currentPhoto.height} px • ${currentPhoto.templateName}",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    ModernGlassCircleButton(
+                        icon = Icons.Rounded.Share,
+                        contentDescription = "Share photo",
+                        inactiveIconTint = TelemetryEmerald,
+                        standaloneGlass = false,
+                        touchSize = actionTouch,
+                        buttonSize = actionVisual,
+                        iconSize = actionIcon,
+                        onClick = shareCurrentPhoto,
+                        testTag = "detail_share_button"
+                    )
+                    ModernGlassCircleButton(
+                        icon = Icons.Rounded.DeleteOutline,
+                        contentDescription = "Delete photo",
+                        inactiveIconTint = MaterialTheme.colorScheme.error,
+                        standaloneGlass = false,
+                        touchSize = actionTouch,
+                        buttonSize = actionVisual,
+                        iconSize = actionIcon,
+                        onClick = { showDeleteConfirm = true },
+                        testTag = "detail_delete_button"
                     )
                 }
-            }
-
-            ModernFloatingCapsule(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                borderColor = MaterialTheme.colorScheme.outline
-            ) {
-                ModernGlassCircleButton(
-                    icon = Icons.Rounded.Fullscreen,
-                    contentDescription = "View full screen",
-                    inactiveIconTint = MaterialTheme.colorScheme.onSurface,
-                    standaloneGlass = false,
-                    buttonSize = 38.dp,
-                    onClick = { isFullScreenPhoto = true },
-                    testTag = "detail_top_fullscreen_button"
-                )
-                ModernGlassCircleButton(
-                    icon = Icons.Rounded.Share,
-                    contentDescription = "Share photo",
-                    inactiveIconTint = TelemetryEmerald,
-                    standaloneGlass = false,
-                    buttonSize = 38.dp,
-                    onClick = shareCurrentPhoto,
-                    testTag = "detail_share_button"
-                )
-                ModernGlassCircleButton(
-                    icon = Icons.Rounded.DeleteOutline,
-                    contentDescription = "Delete photo",
-                    inactiveIconTint = MaterialTheme.colorScheme.error,
-                    standaloneGlass = false,
-                    buttonSize = 38.dp,
-                    onClick = { showDeleteConfirm = true },
-                    testTag = "detail_delete_button"
-                )
             }
         }
 
@@ -779,53 +798,60 @@ fun PhotoDetailScreen(
                 }
             }
 
-            if (!currentPhoto.isVideo) {
-                ZoomControlsPill(
-                    currentZoom = activeZoom,
-                    onZoomOut = { adjustPhotoZoom(activePhotoId, activeZoom - 0.75f) },
-                    onResetZoom = { adjustPhotoZoom(activePhotoId, 1f) },
-                    onZoomIn = { adjustPhotoZoom(activePhotoId, activeZoom + 0.75f) },
-                    zoomOutTestTag = "detail_zoom_out_button",
-                    zoomResetTestTag = "detail_zoom_reset_button",
-                    zoomInTestTag = "detail_zoom_in_button",
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp)
-                )
-            } else {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.62f),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp)
-                ) {
-                    Text(
-                        text = "Tap video to play",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 10.sp,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            IconButton(
-                onClick = { isFullScreenPhoto = true },
+            BoxWithConstraints(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xAA0C1119))
-                    .border(0.9.dp, TelemetryEmerald.copy(alpha = 0.65f), CircleShape)
-                    .testTag("detail_fullscreen_button")
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Fullscreen,
-                    contentDescription = "Open full screen viewer",
-                    tint = TelemetryEmerald
-                )
+                val isCompactViewport = maxWidth < 330.dp
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!currentPhoto.isVideo) {
+                        ZoomControlsPill(
+                            currentZoom = activeZoom,
+                            onZoomOut = { adjustPhotoZoom(activePhotoId, activeZoom - 0.75f) },
+                            onResetZoom = { adjustPhotoZoom(activePhotoId, 1f) },
+                            onZoomIn = { adjustPhotoZoom(activePhotoId, activeZoom + 0.75f) },
+                            zoomOutTestTag = "detail_zoom_out_button",
+                            zoomResetTestTag = "detail_zoom_reset_button",
+                            zoomInTestTag = "detail_zoom_in_button",
+                            buttonSize = if (isCompactViewport) 36.dp else 42.dp
+                        )
+                    } else {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.62f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = "Tap video to play",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 10.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { isFullScreenPhoto = true },
+                        modifier = Modifier
+                            .size(if (isCompactViewport) 40.dp else 46.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xAA0C1119))
+                            .border(0.9.dp, TelemetryEmerald.copy(alpha = 0.65f), CircleShape)
+                            .testTag("detail_fullscreen_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Fullscreen,
+                            contentDescription = "Open full screen viewer",
+                            tint = TelemetryEmerald
+                        )
+                    }
+                }
             }
         }
 
@@ -1162,7 +1188,8 @@ private fun ZoomControlsPill(
     zoomOutTestTag: String,
     zoomResetTestTag: String,
     zoomInTestTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    buttonSize: Dp = 42.dp
 ) {
     val canZoomOut = currentZoom > 1.02f
     val canZoomIn = currentZoom < 4.98f
@@ -1181,7 +1208,7 @@ private fun ZoomControlsPill(
                 onClick = onZoomOut,
                 enabled = canZoomOut,
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(buttonSize)
                     .testTag(zoomOutTestTag)
             ) {
                 Icon(
@@ -1198,19 +1225,21 @@ private fun ZoomControlsPill(
                 color = if (canZoomOut) ShutterGold.copy(alpha = 0.22f) else Color.Transparent,
                 shape = CircleShape,
                 modifier = Modifier
-                    .height(36.dp)
+                    .height((buttonSize - 6.dp).coerceAtLeast(30.dp))
                     .testTag(zoomResetTestTag)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 10.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
                     Text(
                         text = String.format(Locale.US, "%.1fx", currentZoom),
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (canZoomOut) ShutterGold else Color.White
+                        color = if (canZoomOut) ShutterGold else Color.White,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -1219,7 +1248,7 @@ private fun ZoomControlsPill(
                 onClick = onZoomIn,
                 enabled = canZoomIn,
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(buttonSize)
                     .testTag(zoomInTestTag)
             ) {
                 Icon(
