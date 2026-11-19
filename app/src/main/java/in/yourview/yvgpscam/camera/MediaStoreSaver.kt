@@ -573,21 +573,23 @@ class MediaStoreSaver(
             return Bitmap.createBitmap(source, x, y, cropW, cropH)
         }
 
+        private const val MAX_FILE_STEM_LENGTH = 48
+
         fun buildCustomFileName(
             config: StampConfig,
             telemetry: GpsTelemetry,
             timestampMillis: Long = System.currentTimeMillis()
         ): String {
-            val fallbackStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMillis))
+            val fallbackStamp = SimpleDateFormat("yyMMdd_HHmmss", Locale.US).format(Date(timestampMillis))
             if (!config.customFileNameEnabled) {
-                return "YVGPSCAM_$fallbackStamp.jpg"
+                return "${StampConfig.FIXED_BRAND_NAME}_$fallbackStamp.jpg"
             }
 
             val parts = mutableListOf<String>()
             config.parsedFnFieldOrder().forEach { field ->
                 when (field) {
                     FileNameField.DATE_TIME -> if (config.fnIncludeDateTime) {
-                        parts.add(SimpleDateFormat("yyyyMMdd_hhmmssa", Locale.US).format(Date(timestampMillis)))
+                        parts.add(SimpleDateFormat("yyMMdd_HHmmss", Locale.US).format(Date(timestampMillis)))
                     }
                     FileNameField.SEQUENCE -> if (config.fnIncludeSequence) {
                         parts.add(config.photoSequenceNumber.coerceAtLeast(1).toString())
@@ -596,28 +598,30 @@ class MediaStoreSaver(
                         parts.add(StampConfig.FIXED_BRAND_NAME)
                     }
                     FileNameField.CUSTOM_2 -> if (config.fnIncludeCustom2 && config.fnCustomText2.isNotBlank()) {
-                        parts.add(config.fnCustomText2.trim())
+                        parts.add(config.fnCustomText2.trim().take(12))
                     }
                     FileNameField.CUSTOM_3 -> if (config.fnIncludeCustom3 && config.fnCustomText3.isNotBlank()) {
-                        parts.add(config.fnCustomText3.trim())
+                        parts.add(config.fnCustomText3.trim().take(12))
                     }
                     FileNameField.FULL_ADDRESS -> if (config.fnIncludeFullAddress) {
-                        val addr = listOf(telemetry.cityState, telemetry.country, telemetry.addressLine)
-                            .filter { it.isNotBlank() }
-                            .joinToString("_")
-                        if (addr.isNotBlank()) parts.add(addr)
+                        val compactLocation = telemetry.cityState
+                            .ifBlank { telemetry.country }
+                            .ifBlank { telemetry.addressLine }
+                            .trim()
+                            .take(16)
+                        if (compactLocation.isNotBlank()) parts.add(compactLocation)
                     }
                     FileNameField.LAT_LON -> if (config.fnIncludeLatLon && telemetry.latitude != null && telemetry.longitude != null) {
-                        parts.add(String.format(Locale.US, "%.6f_%.6f", telemetry.latitude, telemetry.longitude))
+                        parts.add(String.format(Locale.US, "%.3f_%.3f", telemetry.latitude, telemetry.longitude))
                     }
                     FileNameField.PLUS_CODE -> if (config.fnIncludePlusCode) {
-                        telemetry.plusCode?.let { parts.add(it) }
+                        telemetry.plusCode?.trim()?.take(12)?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
                     }
                     FileNameField.TIME_ZONE -> if (config.fnIncludeTimeZone) {
                         parts.add(telemetry.formatTimeZoneOffset(timestampMillis).replace(" ", ""))
                     }
                     FileNameField.NOTE -> if (config.fnIncludeNote && config.customNote.isNotBlank()) {
-                        parts.add(config.customNote.trim().take(28))
+                        parts.add(config.customNote.trim().take(14))
                     }
                 }
             }
@@ -634,7 +638,22 @@ class MediaStoreSaver(
                     "${StampConfig.FIXED_BRAND_NAME}_$raw"
                 }
             }
-            raw = raw.take(120).trimEnd('_', '.')
+
+            if (raw.length > MAX_FILE_STEM_LENGTH) {
+                val truncated = raw.take(MAX_FILE_STEM_LENGTH).trimEnd('_', '.')
+                raw = if (truncated.contains(StampConfig.FIXED_BRAND_NAME, ignoreCase = true)) {
+                    truncated
+                } else {
+                    val maxPrefix = (MAX_FILE_STEM_LENGTH - StampConfig.FIXED_BRAND_NAME.length - 1).coerceAtLeast(0)
+                    val prefix = raw.take(maxPrefix).trimEnd('_', '.')
+                    if (prefix.isBlank()) {
+                        StampConfig.FIXED_BRAND_NAME
+                    } else {
+                        "${prefix}_${StampConfig.FIXED_BRAND_NAME}"
+                    }
+                }
+            }
+
             if (!raw.contains(StampConfig.FIXED_BRAND_NAME, ignoreCase = true)) {
                 raw = "${StampConfig.FIXED_BRAND_NAME}_$fallbackStamp"
             }

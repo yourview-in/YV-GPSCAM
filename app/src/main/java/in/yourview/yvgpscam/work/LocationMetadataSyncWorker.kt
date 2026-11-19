@@ -41,7 +41,7 @@ class LocationMetadataSyncWorker(
 
     @VisibleForTesting
     internal data class TestDependencies(
-        val isOnline: () -> Boolean = { NetworkConnectivityObserver.isNetworkConnected(appContext) },
+        val isOnline: (() -> Boolean)? = null,
         val syncStore: LocationMetadataSyncStore? = null,
         val accountStore: GoogleDriveAccountStore? = null,
         val driveRepository: GoogleDriveBackupRepository? = null,

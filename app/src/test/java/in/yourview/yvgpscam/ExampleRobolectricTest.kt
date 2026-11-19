@@ -19,7 +19,10 @@ import `in`.yourview.yvgpscam.map.MiniMapTileRenderer
 import `in`.yourview.yvgpscam.map.OfflineMapRepository
 import `in`.yourview.yvgpscam.map.toGoogleMapType
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -599,6 +602,15 @@ class ExampleRobolectricTest {
             addressLine = "Massa Marittima",
             signalState = GpsSignalState.LOCKED
         )
+        val compactDefaultName = `in`.yourview.yvgpscam.camera.MediaStoreSaver.buildCustomFileName(
+            config = StampConfig(),
+            telemetry = telemetry,
+            timestampMillis = 1763141040000L
+        )
+        assertTrue(compactDefaultName.startsWith("YVGPSCAM_"))
+        assertTrue(compactDefaultName.endsWith("_1.jpg"))
+        assertTrue("Expected short default filename, got: $compactDefaultName", compactDefaultName.length <= 30)
+
         val config = StampConfig(
             customFileNameEnabled = true,
             fnIncludeDateTime = true,
@@ -608,9 +620,9 @@ class ExampleRobolectricTest {
             fnCustomText1 = "YVGPSCAM",
             fnIncludeCustom2 = true,
             fnCustomText2 = "SurveyA",
-            fnIncludeFullAddress = true,
+            fnIncludeFullAddress = false,
             fnIncludeLatLon = true,
-            fnIncludePlusCode = true
+            fnIncludePlusCode = false
         )
         val generated = `in`.yourview.yvgpscam.camera.MediaStoreSaver.buildCustomFileName(
             config = config,
@@ -621,7 +633,26 @@ class ExampleRobolectricTest {
         assertTrue(generated.contains("_7_"))
         assertTrue(generated.contains("YVGPSCAM"))
         assertTrue(generated.contains("SurveyA"))
-        assertTrue(generated.contains("64.545127_-19.091384"))
+        assertTrue(generated.contains("64.545_-19.091"))
+        assertTrue("Expected compact filename <= 52 chars, got: $generated", generated.length <= 52)
+
+        val maxFieldsConfig = config.copy(
+            fnIncludeCustom3 = true,
+            fnCustomText3 = "DepartmentLongCode",
+            fnIncludeFullAddress = true,
+            fnIncludePlusCode = true,
+            fnIncludeTimeZone = true,
+            fnIncludeNote = true,
+            customNote = "Very long site inspection note"
+        )
+        val cappedName = `in`.yourview.yvgpscam.camera.MediaStoreSaver.buildCustomFileName(
+            config = maxFieldsConfig,
+            telemetry = telemetry,
+            timestampMillis = 1763141040000L
+        )
+        assertTrue(cappedName.endsWith(".jpg"))
+        assertTrue(cappedName.contains("YVGPSCAM"))
+        assertTrue("Expected capped filename <= 52 chars, got: $cappedName", cappedName.length <= 52)
 
         val fallbackConfig = config.copy(customFileNameEnabled = false)
         val defaultName = `in`.yourview.yvgpscam.camera.MediaStoreSaver.buildCustomFileName(
@@ -631,6 +662,7 @@ class ExampleRobolectricTest {
         )
         assertTrue(defaultName.startsWith("YVGPSCAM_"))
         assertTrue(defaultName.endsWith(".jpg"))
+        assertTrue("Expected compact fallback filename, got: $defaultName", defaultName.length <= 28)
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val stampPrefs = `in`.yourview.yvgpscam.data.local.StampPreferencesRepository(context)
@@ -1420,6 +1452,318 @@ class ExampleRobolectricTest {
         assertEquals("India", tel.country)
         assertEquals("IN", tel.countryCode)
         assertEquals(GpsSignalState.LOCKED, tel.signalState)
+    }
+
+    @Test
+    fun `disk cached map tile provider serves exact tiles ancestor tiles and visited area static cache offline`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = AppDatabase.getInstance(context)
+        val offlineRepo = OfflineMapRepository(
+            context = context,
+            regionDao = db.offlineRegionDao(),
+            isNetworkOnline = { false }
+        )
+
+        val tileBmp = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val baos = java.io.ByteArrayOutputStream()
+        tileBmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        tileBmp.recycle()
+        val pngBytes = baos.toByteArray()
+
+        // Clear target & parent tiles first to guarantee deterministic disk state
+        offlineRepo.getTileFile(14, 11761, 7406, MapStyle.STANDARD).delete()
+        offlineRepo.getTileFile(15, 23522, 14812, MapStyle.STANDARD).delete()
+        offlineRepo.getTileFile(15, 23523, 14813, MapStyle.STANDARD).delete()
+        offlineRepo.getTileFile(15, 100, 100, MapStyle.STANDARD).delete()
+
+        // Persist Z14 parent and one Z15 exact tile on disk
+        offlineRepo.saveTileBytes(14, 11761, 7406, pngBytes, MapStyle.STANDARD)
+        offlineRepo.saveTileBytes(15, 23522, 14812, pngBytes, MapStyle.STANDARD)
+
+        val provider = `in`.yourview.yvgpscam.map.DiskCachedMapTileProvider(
+            offlineMapRepository = offlineRepo,
+            mapStyle = MapStyle.STANDARD,
+            allowNetwork = { false }
+        )
+
+        // 1. Exact tile hit on disk
+        val exactTile = provider.getTile(23522, 14812, 15)
+        assertTrue(exactTile !== com.google.android.gms.maps.model.TileProvider.NO_TILE)
+        assertEquals(256, exactTile.width)
+        assertEquals(256, exactTile.height)
+        assertNotNull(exactTile.data)
+        assertTrue(exactTile.data!!.isNotEmpty())
+
+        // 2. Sibling Z15 tile missing on disk -> crops/upscales from Z14 ancestor automatically
+        val ancestorTile = provider.getTile(23523, 14813, 15)
+        assertTrue(ancestorTile !== com.google.android.gms.maps.model.TileProvider.NO_TILE)
+        assertEquals(256, ancestorTile.width)
+        assertNotNull(ancestorTile.data)
+        assertTrue(ancestorTile.data!!.isNotEmpty())
+
+        // 3. Unvisited area offline -> returns NO_TILE cleanly
+        val unvisitedTile = provider.getTile(100, 100, 15)
+        assertEquals(com.google.android.gms.maps.model.TileProvider.NO_TILE, unvisitedTile)
+
+        // 4. Nearest cached Google Static Map lookup matches nearby visited location (~90m away)
+        val staticDir = java.io.File(context.filesDir, "offline_tiles/google_static").apply { mkdirs() }
+        val visitedFile = java.io.File(staticDir, "STANDARD_z15_17.38504_78.48667.png")
+        visitedFile.writeBytes(pngBytes)
+        val nearbyStatic = offlineRepo.findNearestCachedStaticMapBytes(
+            lat = 17.38580,
+            lon = 78.48667,
+            zoom = 15,
+            mapStyle = MapStyle.STANDARD,
+            maxDistanceMeters = 350.0
+        )
+        assertNotNull(nearbyStatic)
+        val farStatic = offlineRepo.findNearestCachedStaticMapBytes(
+            lat = 28.61390,
+            lon = 77.20900,
+            zoom = 15,
+            mapStyle = MapStyle.STANDARD,
+            maxDistanceMeters = 350.0
+        )
+        assertNull(farStatic)
+        visitedFile.delete()
+    }
+
+    @Test
+    fun `location metadata sync worker enriches offline photos and syncs cached location updates to cloud`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
+
+        val syncStore = `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore.getInstance(context)
+        syncStore.clearAll()
+
+        // 1. Offline location update gets cached locally & schedules WorkManager with NetworkType.CONNECTED
+        val locationManager = `in`.yourview.yvgpscam.sensors.LocationTelemetryManager(
+            context = context,
+            isNetworkOnline = { false },
+            syncStore = syncStore
+        )
+        locationManager.acceptLocationForTest(
+            android.location.Location(android.location.LocationManager.GPS_PROVIDER).apply {
+                latitude = 17.412345
+                longitude = 78.456789
+                altitude = 525.0
+                accuracy = 6.0f
+                time = System.currentTimeMillis()
+            }
+        )
+        assertEquals(1, syncStore.pendingCountFlow.value)
+
+        val workInfos = androidx.work.WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(`in`.yourview.yvgpscam.work.LocationMetadataSyncScheduler.UNIQUE_WORK_NAME)
+            .get()
+        assertTrue(workInfos.isNotEmpty())
+        assertEquals(
+            androidx.work.NetworkType.CONNECTED,
+            `in`.yourview.yvgpscam.work.LocationMetadataSyncScheduler.buildSyncWorkRequest().workSpec.constraints.requiredNetworkType
+        )
+
+        // 2. Insert an offline-captured photo missing street/city address
+        val db = AppDatabase.getInstance(context)
+        val photoRepo = `in`.yourview.yvgpscam.data.local.PhotoRepository(context, db.capturedPhotoDao())
+        val tempJpg = java.io.File(context.cacheDir, "offline_sync_test.jpg")
+        val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        java.io.FileOutputStream(tempJpg).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        bmp.recycle()
+
+        val photoId = photoRepo.insertPhoto(
+            `in`.yourview.yvgpscam.data.model.CapturedPhotoEntity(
+                mediaUri = android.net.Uri.fromFile(tempJpg).toString(),
+                displayName = "YVGPSCAM_OFFLINE_SYNC.jpg",
+                capturedAtMillis = System.currentTimeMillis(),
+                latitude = 17.412345,
+                longitude = 78.456789,
+                altitudeMeters = 525.0,
+                accuracyMeters = 6.0f,
+                compassAzimuth = 90f,
+                compassCardinal = "E",
+                addressLine = "",
+                cityState = "",
+                country = "",
+                customNote = "Field site",
+                templateName = "Classic",
+                width = 64,
+                height = 64
+            )
+        )
+
+        // 3. Configure signed-in account + mock OkHttp Drive backend for worker
+        val accountStore = `in`.yourview.yvgpscam.data.cloud.GoogleDriveAccountStore(context)
+        accountStore.saveAccount("surveyor@example.com", "Field Surveyor")
+
+        var uploadedMetadataJsonBody: String? = null
+        val mockDriveClient = okhttp3.OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val url = req.url.toString()
+                val jsonResponse = when {
+                    url.contains("mimeType") && req.method == "GET" && url.contains("folder") ->
+                        """{"files":[{"id":"folder_yv_1","name":"YVGPSCam"}]}"""
+                    req.method == "GET" ->
+                        """{"files":[]}"""
+                    req.method == "POST" && url.contains("uploadType=multipart") -> {
+                        val buffer = okio.Buffer()
+                        req.body?.writeTo(buffer)
+                        val bodyText = buffer.readUtf8()
+                        if (bodyText.contains("location_metadata_sync")) {
+                            uploadedMetadataJsonBody = bodyText
+                            """{"id":"meta_file_1"}"""
+                        } else {
+                            """{"id":"photo_file_1","name":"YVGPSCAM_OFFLINE_SYNC.jpg","size":"1234","appProperties":{"bid":"b_1","cap":"1700000000000"}}"""
+                        }
+                    }
+                    else -> """{"id":"ok_1"}"""
+                }
+                okhttp3.Response.Builder()
+                    .request(req)
+                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(jsonResponse.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+
+        val mockDriveRepo = `in`.yourview.yvgpscam.data.cloud.GoogleDriveBackupRepository(mockDriveClient)
+
+        try {
+            // Verify worker returns retry() while still offline
+            `in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.testOverrides =
+                `in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.TestDependencies(
+                    isOnline = { false },
+                    syncStore = syncStore
+                )
+            val offlineWorker = androidx.work.testing.TestListenableWorkerBuilder<`in`.yourview.yvgpscam.work.LocationMetadataSyncWorker>(context)
+                .build()
+            assertEquals(androidx.work.ListenableWorker.Result.retry(), offlineWorker.doWork())
+
+            // Now simulate network restoration -> worker geocodes & uploads metadata + photo to Drive
+            `in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.testOverrides =
+                `in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.TestDependencies(
+                    isOnline = { true },
+                    syncStore = syncStore,
+                    accountStore = accountStore,
+                    driveRepository = mockDriveRepo,
+                    photoRepository = photoRepo,
+                    tokenProvider = { "mock_drive_token_123" },
+                    geocoderOverride = { _, _ -> Triple("Banjara Hills Rd 12", "Hyderabad, Telangana", "India") }
+                )
+
+            val onlineWorker = androidx.work.testing.TestListenableWorkerBuilder<`in`.yourview.yvgpscam.work.LocationMetadataSyncWorker>(context)
+                .build()
+            val result = onlineWorker.doWork()
+            assertTrue(result is androidx.work.ListenableWorker.Result.Success)
+            val output = (result as androidx.work.ListenableWorker.Result.Success).outputData
+            assertTrue(output.getInt(`in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.KEY_GEOCODED_PHOTOS, 0) >= 1)
+            assertEquals(1, output.getInt(`in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.KEY_SYNCED_METADATA_ENTRIES, 0))
+            assertEquals(0, syncStore.pendingCountFlow.value)
+            assertNotNull(uploadedMetadataJsonBody)
+            assertTrue(uploadedMetadataJsonBody!!.contains("YVGPSCAM"))
+            assertTrue(uploadedMetadataJsonBody!!.contains("Banjara Hills Rd 12"))
+
+            val enrichedPhoto = photoRepo.getPhotoById(photoId).first()
+            assertEquals("Banjara Hills Rd 12", enrichedPhoto?.addressLine)
+            assertEquals("Hyderabad, Telangana", enrichedPhoto?.cityState)
+        } finally {
+            `in`.yourview.yvgpscam.work.LocationMetadataSyncWorker.testOverrides = null
+            accountStore.clearAccount()
+            syncStore.clearAll()
+            photoRepo.getPhotoById(photoId).first()?.let { photoRepo.deletePhoto(it) }
+            tempJpg.delete()
+        }
+    }
+
+    @Test
+    fun `camera viewmodel transitions offline mode sync pending and online synced status indicator states`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = AppDatabase.getInstance(context)
+        val syncStore = `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore.getInstance(context)
+        syncStore.clearAll()
+
+        val stampPrefs = `in`.yourview.yvgpscam.data.local.StampPreferencesRepository(context)
+        runBlocking { stampPrefs.updateConfig { it.copy(offlineOnlyMapMode = false) } }
+
+        val offlineRepo = OfflineMapRepository(context, db.offlineRegionDao(), isNetworkOnline = { false })
+        val vm = `in`.yourview.yvgpscam.ui.viewmodel.CameraViewModel(
+            locationManager = `in`.yourview.yvgpscam.sensors.LocationTelemetryManager(
+                context = context,
+                isNetworkOnline = { false },
+                syncStore = syncStore
+            ),
+            stampPrefs = stampPrefs,
+            photoRepository = `in`.yourview.yvgpscam.data.local.PhotoRepository(context, db.capturedPhotoDao()),
+            miniMapRenderer = MiniMapTileRenderer(offlineRepo),
+            mediaStoreSaver = `in`.yourview.yvgpscam.camera.MediaStoreSaver(context, PhotoStampRenderer(context)),
+            connectivityObserver = null,
+            locationSyncStore = syncStore
+        )
+
+        val collected = mutableListOf<`in`.yourview.yvgpscam.ui.viewmodel.CameraSyncIndicatorState>()
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main.immediate).launch {
+            vm.offlineSyncUiState.collect { collected.add(it) }
+        }
+        fun awaitState(predicate: (`in`.yourview.yvgpscam.ui.viewmodel.CameraSyncIndicatorState) -> Boolean) {
+            val deadline = System.currentTimeMillis() + 3_000L
+            while (!predicate(vm.offlineSyncUiState.value) && System.currentTimeMillis() < deadline) {
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                Thread.sleep(20L)
+            }
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        }
+
+        try {
+            // 1. Default online with 0 pending -> ONLINE_SYNCED
+            awaitState { it.mode == `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.ONLINE_SYNCED }
+            assertEquals(
+                `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.ONLINE_SYNCED,
+                vm.offlineSyncUiState.value.mode
+            )
+
+            // 2. Network drops + offline location cached -> OFFLINE_MODE with pendingCount == 1
+            vm.onNetworkConnectivityChanged(isOnline = false, hasLocationPermission = false)
+            val entry = syncStore.recordOfflineLocation(
+                latitude = 17.385,
+                longitude = 78.486,
+                forceRecord = true
+            )
+            assertNotNull(entry)
+            awaitState {
+                it.mode == `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.OFFLINE_MODE &&
+                    it.pendingCount == 1
+            }
+            assertEquals(
+                `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.OFFLINE_MODE,
+                vm.offlineSyncUiState.value.mode
+            )
+            assertEquals(1, vm.offlineSyncUiState.value.pendingCount)
+
+            // 3. Network restores while pending count > 0 -> SYNC_PENDING
+            vm.onNetworkConnectivityChanged(isOnline = true, hasLocationPermission = false)
+            awaitState { it.mode == `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.SYNC_PENDING }
+            assertEquals(
+                `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.SYNC_PENDING,
+                vm.offlineSyncUiState.value.mode
+            )
+
+            // 4. Sync completes -> returns to ONLINE_SYNCED
+            syncStore.markEntriesSynced(listOf(entry!!.id))
+            awaitState {
+                it.mode == `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.ONLINE_SYNCED &&
+                    it.pendingCount == 0
+            }
+            assertEquals(
+                `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode.ONLINE_SYNCED,
+                vm.offlineSyncUiState.value.mode
+            )
+            assertEquals(0, vm.offlineSyncUiState.value.pendingCount)
+        } finally {
+            job.cancel()
+            syncStore.clearAll()
+        }
     }
 }
 

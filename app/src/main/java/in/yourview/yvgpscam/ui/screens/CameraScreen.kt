@@ -78,6 +78,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesomeMosaic
 import androidx.compose.material.icons.rounded.BurstMode
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.DriveFileRenameOutline
@@ -115,6 +118,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -178,15 +182,19 @@ import `in`.yourview.yvgpscam.ui.components.ModernMiniTogglePill
 import `in`.yourview.yvgpscam.ui.components.StampPreviewCard
 import `in`.yourview.yvgpscam.ui.components.SystemBarsImmersiveEffect
 import `in`.yourview.yvgpscam.ui.components.launchPostCaptureAction
+import `in`.yourview.yvgpscam.ui.theme.AlertCoral
 import `in`.yourview.yvgpscam.ui.theme.FocusReticleGreen
 import `in`.yourview.yvgpscam.ui.theme.JetBrainsMonoFontFamily
 import `in`.yourview.yvgpscam.ui.theme.ObsidianBorder
 import `in`.yourview.yvgpscam.ui.theme.ObsidianSurface
 import `in`.yourview.yvgpscam.ui.theme.ObsidianSurfaceHigh
 import `in`.yourview.yvgpscam.ui.theme.ShutterGold
+import `in`.yourview.yvgpscam.ui.theme.SignalAmber
 import `in`.yourview.yvgpscam.ui.theme.TelemetryEmerald
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraAspectRatio
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraCaptureMode
+import `in`.yourview.yvgpscam.ui.viewmodel.CameraConnectivitySyncMode
+import `in`.yourview.yvgpscam.ui.viewmodel.CameraSyncIndicatorState
 import `in`.yourview.yvgpscam.ui.viewmodel.CameraViewModel
 import `in`.yourview.yvgpscam.util.QrCodeHelper
 import kotlinx.coroutines.Job
@@ -268,6 +276,7 @@ fun CameraScreen(
     val miniMapBitmap by viewModel.miniMapBitmap.collectAsStateWithLifecycle()
     val latestPhoto by viewModel.latestPhoto.collectAsStateWithLifecycle()
     val horizonTilt by viewModel.horizonTiltDegrees.collectAsStateWithLifecycle()
+    val offlineSyncState by viewModel.offlineSyncUiState.collectAsStateWithLifecycle()
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -1283,41 +1292,77 @@ fun CameraScreen(
                 )
             }
 
-            // Top-Right: Modern GPS Signal & Offline Satellite Status Pill
-            CompactGpsStatusPill(
-                signalState = telemetry.signalState,
-                accuracyMeters = telemetry.accuracyMeters,
-                satellitesUsed = telemetry.satellitesUsed,
-                satellitesVisible = telemetry.satellitesVisible,
-                offlineOnly = stampConfig.offlineOnlyMapMode,
-                isDeviceLocationEnabled = isDeviceLocationEnabled,
-                hasLocationPermission = hasLocationPermission,
-                onTapAction = {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    when {
-                        !hasLocationPermission -> {
-                            permissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
-                                )
-                            )
-                        }
-                        !isDeviceLocationEnabled -> {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                            }
-                        }
-                        else -> {
-                            viewModel.refreshDeviceLocation(true)
-                            viewModel.setStatusMessage("Refreshing device GPS fix...")
-                        }
-                    }
-                },
+            // Top-Right: Subtle Offline / Sync Pending Indicator + Modern GPS Signal Status Pill
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = 10.dp, top = topInsetPad)
-            )
+            ) {
+                CameraOfflineSyncStatusIcon(
+                    state = offlineSyncState,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        when (offlineSyncState.mode) {
+                            CameraConnectivitySyncMode.OFFLINE_MODE -> {
+                                val cachedMsg = if (offlineSyncState.pendingCount > 0) {
+                                    "Offline Mode · ${offlineSyncState.pendingCount} geotag update(s) cached for sync"
+                                } else {
+                                    "Offline Mode · Using cached map tiles & local GPS"
+                                }
+                                viewModel.setStatusMessage(cachedMsg)
+                            }
+                            CameraConnectivitySyncMode.SYNC_PENDING -> {
+                                viewModel.requestPendingMetadataSync()
+                                viewModel.setStatusMessage(
+                                    if (offlineSyncState.pendingCount > 0) {
+                                        "Sync Pending · Re-syncing ${offlineSyncState.pendingCount} cached location update(s)..."
+                                    } else {
+                                        "Sync Pending · Re-syncing location metadata..."
+                                    }
+                                )
+                            }
+                            CameraConnectivitySyncMode.ONLINE_SYNCED -> {
+                                viewModel.requestPendingMetadataSync()
+                                viewModel.setStatusMessage("Online · Location telemetry & geotags synced")
+                            }
+                        }
+                    }
+                )
+
+                CompactGpsStatusPill(
+                    signalState = telemetry.signalState,
+                    accuracyMeters = telemetry.accuracyMeters,
+                    satellitesUsed = telemetry.satellitesUsed,
+                    satellitesVisible = telemetry.satellitesVisible,
+                    offlineOnly = stampConfig.offlineOnlyMapMode,
+                    isDeviceLocationEnabled = isDeviceLocationEnabled,
+                    hasLocationPermission = hasLocationPermission,
+                    onTapAction = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        when {
+                            !hasLocationPermission -> {
+                                permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                            !isDeviceLocationEnabled -> {
+                                runCatching {
+                                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                                }
+                            }
+                            else -> {
+                                viewModel.refreshDeviceLocation(true)
+                                viewModel.setStatusMessage("Refreshing device GPS fix...")
+                            }
+                        }
+                    }
+                )
+            }
 
             // Detected Live QR Code Banner
             val qrText = hudState.detectedQrText
@@ -2223,6 +2268,78 @@ private fun CompactGpsStatusPill(
             )
             if (offlineOnly) {
                 Icon(Icons.Rounded.OfflinePin, contentDescription = "Offline map mode", tint = ShutterGold, modifier = Modifier.size(11.dp))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun CameraOfflineSyncStatusIcon(
+    state: CameraSyncIndicatorState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val targetTint = when (state.mode) {
+        CameraConnectivitySyncMode.OFFLINE_MODE -> AlertCoral
+        CameraConnectivitySyncMode.SYNC_PENDING -> SignalAmber
+        CameraConnectivitySyncMode.ONLINE_SYNCED -> TelemetryEmerald.copy(alpha = 0.88f)
+    }
+    val animatedTint by animateColorAsState(
+        targetValue = targetTint,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 360f),
+        label = "cameraOfflineSyncTint"
+    )
+    val statusIcon = when (state.mode) {
+        CameraConnectivitySyncMode.OFFLINE_MODE -> Icons.Rounded.CloudOff
+        CameraConnectivitySyncMode.SYNC_PENDING -> Icons.Rounded.CloudSync
+        CameraConnectivitySyncMode.ONLINE_SYNCED -> Icons.Rounded.CloudDone
+    }
+    val statusDescription = when (state.mode) {
+        CameraConnectivitySyncMode.OFFLINE_MODE -> stringResource(R.string.camera_status_offline_mode)
+        CameraConnectivitySyncMode.SYNC_PENDING -> stringResource(R.string.camera_status_sync_pending)
+        CameraConnectivitySyncMode.ONLINE_SYNCED -> stringResource(R.string.camera_status_online_synced)
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .testTag("camera_offline_sync_status_icon")
+    ) {
+        Surface(
+            color = Color(0xAA0C1119),
+            shape = CircleShape,
+            modifier = Modifier.border(
+                width = 1.dp,
+                color = animatedTint.copy(alpha = 0.72f),
+                shape = CircleShape
+            )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.padding(
+                    horizontal = if (state.pendingCount > 0) 7.dp else 6.dp,
+                    vertical = 5.dp
+                )
+            ) {
+                Icon(
+                    imageVector = statusIcon,
+                    contentDescription = statusDescription,
+                    tint = animatedTint,
+                    modifier = Modifier.size(13.dp)
+                )
+                if (state.pendingCount > 0 && state.mode != CameraConnectivitySyncMode.ONLINE_SYNCED) {
+                    Text(
+                        text = state.pendingCount.coerceAtMost(99).toString(),
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = animatedTint
+                    )
+                }
             }
         }
     }

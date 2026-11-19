@@ -147,7 +147,7 @@ fun FileNameScreen(
                 onClick = {
                     viewModel.updateStampConfig {
                         it.copy(
-                            fnFieldOrderSerialized = StampConfig.serializeFnFieldOrder(FileNameField.entries)
+                            fnFieldOrderSerialized = StampConfig.serializeFnFieldOrder(StampConfig.DEFAULT_FN_FIELD_ORDER)
                         )
                     }
                 },
@@ -221,13 +221,25 @@ fun FileNameScreen(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            text = "NEXT CAPTURE FILE NAME",
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ShutterGold,
-                            letterSpacing = 0.8.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "NEXT CAPTURE FILE NAME",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ShutterGold,
+                                letterSpacing = 0.8.sp
+                            )
+                            Text(
+                                text = "${livePreviewFilename.length} chars",
+                                fontSize = 10.5.sp,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Text(
                             text = livePreviewFilename,
                             fontFamily = JetBrainsMonoFontFamily,
@@ -259,7 +271,7 @@ fun FileNameScreen(
                                 FileNameField.DATE_TIME -> {
                                     FileNameCheckRow(
                                         title = "Date & Time",
-                                        subtitle = "Timestamp segment (YYYYMMDD_hhmmss)",
+                                        subtitle = "Compact timestamp (YYMMDD_HHmmss)",
                                         checked = config.fnIncludeDateTime,
                                         enabled = config.customFileNameEnabled,
                                         onToggle = { v -> viewModel.updateStampConfig { it.copy(fnIncludeDateTime = v) } },
@@ -352,9 +364,9 @@ fun FileNameScreen(
                                     AnimatedVisibility(visible = expandCustom2) {
                                         OutlinedTextField(
                                             value = config.fnCustomText2,
-                                            onValueChange = { txt -> viewModel.updateStampConfig { it.copy(fnCustomText2 = txt.take(32)) } },
+                                            onValueChange = { txt -> viewModel.updateStampConfig { it.copy(fnCustomText2 = txt.take(16)) } },
                                             label = { Text("Custom Name 2 Text") },
-                                            placeholder = { Text("e.g., SiteInspection") },
+                                            placeholder = { Text("e.g., SiteA") },
                                             singleLine = true,
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -387,9 +399,9 @@ fun FileNameScreen(
                                     AnimatedVisibility(visible = expandCustom3) {
                                         OutlinedTextField(
                                             value = config.fnCustomText3,
-                                            onValueChange = { txt -> viewModel.updateStampConfig { it.copy(fnCustomText3 = txt.take(32)) } },
+                                            onValueChange = { txt -> viewModel.updateStampConfig { it.copy(fnCustomText3 = txt.take(16)) } },
                                             label = { Text("Custom Name 3 Text") },
-                                            placeholder = { Text("e.g., Phase2") },
+                                            placeholder = { Text("e.g., P2") },
                                             singleLine = true,
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -401,7 +413,7 @@ fun FileNameScreen(
                                 FileNameField.FULL_ADDRESS -> {
                                     FileNameCheckRow(
                                         title = "Full Address",
-                                        subtitle = "City, country & street name",
+                                        subtitle = "Short city/locality name",
                                         checked = config.fnIncludeFullAddress,
                                         enabled = config.customFileNameEnabled,
                                         onToggle = { v -> viewModel.updateStampConfig { it.copy(fnIncludeFullAddress = v) } },
@@ -415,7 +427,7 @@ fun FileNameScreen(
                                 FileNameField.LAT_LON -> {
                                     FileNameCheckRow(
                                         title = "Lat/Long",
-                                        subtitle = "Decimal coordinates in filename",
+                                        subtitle = "Short coordinates (e.g., 37.422_-122.084)",
                                         checked = config.fnIncludeLatLon,
                                         enabled = config.customFileNameEnabled,
                                         onToggle = { v -> viewModel.updateStampConfig { it.copy(fnIncludeLatLon = v) } },

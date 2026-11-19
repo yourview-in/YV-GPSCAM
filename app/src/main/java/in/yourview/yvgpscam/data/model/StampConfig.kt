@@ -186,11 +186,11 @@ data class StampConfig(
     val fnIncludeCustom3: Boolean = false,
     val fnCustomText3: String = "",
     val fnIncludeFullAddress: Boolean = false,
-    val fnIncludeLatLon: Boolean = true,
+    val fnIncludeLatLon: Boolean = false,
     val fnIncludePlusCode: Boolean = false,
     val fnIncludeTimeZone: Boolean = false,
     val fnIncludeNote: Boolean = false,
-    val fnFieldOrderSerialized: String = FileNameField.entries.joinToString(",") { it.name },
+    val fnFieldOrderSerialized: String = DEFAULT_FN_FIELD_ORDER.joinToString(",") { it.name },
     // App Settings & Camera Tools
     val appLanguage: String = "English",
     val appThemeMode: AppThemeMode = AppThemeMode.DARK,
@@ -220,7 +220,7 @@ data class StampConfig(
             .split(",")
             .mapNotNull { token -> runCatching { FileNameField.valueOf(token.trim()) }.getOrNull() }
             .distinct()
-        val missing = FileNameField.entries.filterNot { parsed.contains(it) }
+        val missing = DEFAULT_FN_FIELD_ORDER.filterNot { parsed.contains(it) }
         return parsed + missing
     }
 
@@ -236,9 +236,22 @@ data class StampConfig(
     companion object {
         const val FIXED_BRAND_NAME = "YVGPSCAM"
 
+        val DEFAULT_FN_FIELD_ORDER: List<FileNameField> = listOf(
+            FileNameField.CUSTOM_1,
+            FileNameField.DATE_TIME,
+            FileNameField.SEQUENCE,
+            FileNameField.CUSTOM_2,
+            FileNameField.CUSTOM_3,
+            FileNameField.FULL_ADDRESS,
+            FileNameField.LAT_LON,
+            FileNameField.PLUS_CODE,
+            FileNameField.TIME_ZONE,
+            FileNameField.NOTE
+        )
+
         fun serializeFnFieldOrder(order: List<FileNameField>): String {
             val clean = order.distinct()
-            val missing = FileNameField.entries.filterNot { clean.contains(it) }
+            val missing = DEFAULT_FN_FIELD_ORDER.filterNot { clean.contains(it) }
             return (clean + missing).joinToString(",") { it.name }
         }
 

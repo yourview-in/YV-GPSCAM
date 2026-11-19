@@ -81,11 +81,11 @@ class StampPreferencesRepository(private val context: Context) {
         val FN_CUSTOM_3 = booleanPreferencesKey("fn_custom_3")
         val FN_CUSTOM_3_TEXT = stringPreferencesKey("fn_custom_3_text")
         val FN_FULL_ADDRESS = booleanPreferencesKey("fn_full_address")
-        val FN_LAT_LON = booleanPreferencesKey("fn_lat_lon")
+        val FN_LAT_LON = booleanPreferencesKey("fn_lat_lon_v2")
         val FN_PLUS_CODE = booleanPreferencesKey("fn_plus_code")
         val FN_TIMEZONE = booleanPreferencesKey("fn_timezone")
         val FN_NOTE = booleanPreferencesKey("fn_note")
-        val FN_FIELD_ORDER = stringPreferencesKey("fn_field_order")
+        val FN_FIELD_ORDER = stringPreferencesKey("fn_field_order_v2")
 
         // Settings & Tools
         val APP_LANGUAGE = stringPreferencesKey("app_language")
@@ -167,12 +167,12 @@ class StampPreferencesRepository(private val context: Context) {
         fnIncludeCustom3 = prefs[Keys.FN_CUSTOM_3] ?: false,
         fnCustomText3 = prefs[Keys.FN_CUSTOM_3_TEXT] ?: "",
         fnIncludeFullAddress = prefs[Keys.FN_FULL_ADDRESS] ?: false,
-        fnIncludeLatLon = prefs[Keys.FN_LAT_LON] ?: true,
+        fnIncludeLatLon = prefs[Keys.FN_LAT_LON] ?: false,
         fnIncludePlusCode = prefs[Keys.FN_PLUS_CODE] ?: false,
         fnIncludeTimeZone = prefs[Keys.FN_TIMEZONE] ?: false,
         fnIncludeNote = prefs[Keys.FN_NOTE] ?: false,
         fnFieldOrderSerialized = prefs[Keys.FN_FIELD_ORDER]
-            ?: FileNameField.entries.joinToString(",") { it.name },
+            ?: StampConfig.DEFAULT_FN_FIELD_ORDER.joinToString(",") { it.name },
         appLanguage = prefs[Keys.APP_LANGUAGE] ?: "English",
         appThemeMode = prefs[Keys.APP_THEME_MODE]?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
             ?: AppThemeMode.DARK,

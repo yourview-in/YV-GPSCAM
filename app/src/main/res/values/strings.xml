@@ -100,4 +100,8 @@
     <string name="update_now">Update Now</string>
     <string name="update_later">Later</string>
     <string name="update_restart_install">Restart &amp; Install</string>
+
+    <string name="camera_status_offline_mode">Offline Mode</string>
+    <string name="camera_status_sync_pending">Sync Pending</string>
+    <string name="camera_status_online_synced">Online Synced</string>
 </resources>

@@ -122,8 +122,8 @@ class PhotoRepository(
             template: String,
             indexOneBased: Int = 1
         ): String {
-            val rawTemplate = template.trim().ifBlank { "${StampConfig.FIXED_BRAND_NAME}_{date}_{coords}_{index}" }
-            val dateStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(photo.capturedAtMillis))
+            val rawTemplate = template.trim().ifBlank { "${StampConfig.FIXED_BRAND_NAME}_{date}_{index}" }
+            val dateStr = SimpleDateFormat("yyMMdd", Locale.US).format(Date(photo.capturedAtMillis))
             val timeStr = SimpleDateFormat("HHmmss", Locale.US).format(Date(photo.capturedAtMillis))
             val dateTimeStr = "${dateStr}_$timeStr"
             val latStr = photo.latitude?.let { lat ->

@@ -19,8 +19,11 @@ import android.os.Looper
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
+import `in`.yourview.yvgpscam.data.cloud.LocationMetadataSyncStore
+import `in`.yourview.yvgpscam.data.cloud.NetworkConnectivityObserver
 import `in`.yourview.yvgpscam.data.model.GpsSignalState
 import `in`.yourview.yvgpscam.data.model.GpsTelemetry
+import `in`.yourview.yvgpscam.work.LocationMetadataSyncScheduler
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -40,7 +43,11 @@ import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.math.abs
 
-class LocationTelemetryManager(private val context: Context) {
+class LocationTelemetryManager @JvmOverloads constructor(
+    private val context: Context,
+    private val isNetworkOnline: () -> Boolean = { NetworkConnectivityObserver.isNetworkConnected(context) },
+    private val syncStore: LocationMetadataSyncStore = LocationMetadataSyncStore.getInstance(context)
+) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fusedClient: FusedLocationProviderClient =
@@ -438,6 +445,13 @@ class LocationTelemetryManager(private val context: Context) {
         } else if (hasLocationPermission) {
             refreshLocationNow(hasLocationPermission = true)
         }
+        if (syncStore.pendingCountFlow.value > 0) {
+            LocationMetadataSyncScheduler.enqueueWhenConnected(context, replaceExisting = true)
+        }
+    }
+
+    fun requestMetadataSyncWhenConnected(replaceExisting: Boolean = true) {
+        LocationMetadataSyncScheduler.enqueueWhenConnected(context, replaceExisting = replaceExisting)
     }
 
     private fun handleNewLocation(location: Location) {
@@ -507,6 +521,26 @@ class LocationTelemetryManager(private val context: Context) {
                     else -> ""
                 }
             )
+        }
+
+        // Cache location telemetry locally when offline so WorkManager syncs it once network returns
+        if (location.provider != PROVIDER_PERSISTED_CACHE && !isNetworkOnline()) {
+            val snapshot = _telemetry.value
+            val cached = syncStore.recordOfflineLocation(
+                latitude = location.latitude,
+                longitude = location.longitude,
+                altitudeMeters = altitude,
+                accuracyMeters = accuracy,
+                compassAzimuth = snapshot.compassAzimuth,
+                compassCardinal = snapshot.compassCardinal,
+                provider = providerName,
+                addressLine = snapshot.addressLine,
+                cityState = snapshot.cityState,
+                country = snapshot.country
+            )
+            if (cached != null) {
+                LocationMetadataSyncScheduler.enqueueWhenConnected(context)
+            }
         }
 
         val prevGeocoded = lastGeocodedLocation

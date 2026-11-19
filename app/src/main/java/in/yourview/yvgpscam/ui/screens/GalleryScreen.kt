@@ -843,12 +843,12 @@ private fun BatchRenameTemplateDialog(
     onDismiss: () -> Unit,
     onConfirmRename: (String) -> Unit
 ) {
-    var templateText by remember { mutableStateOf("YVGPSCAM_{date}_{coords}_{index}") }
+    var templateText by remember { mutableStateOf("YVGPSCAM_{date}_{index}") }
     val samplePreview = remember(templateText, selectedPhotos) {
         previewFormatter(selectedPhotos.first(), templateText)
     }
     val placeholders = listOf(
-        "{date}" to "YYYYMMDD",
+        "{date}" to "YYMMDD",
         "{time}" to "HHMMSS",
         "{lat}" to "Latitude",
         "{lon}" to "Longitude",

@@ -198,7 +198,9 @@ private fun YvGpsCamApp(
                 container.stampPreferencesRepository,
                 container.photoRepository,
                 container.miniMapTileRenderer,
-                container.mediaStoreSaver
+                container.mediaStoreSaver,
+                container.networkConnectivityObserver,
+                container.locationMetadataSyncStore
             )
         }
     )
@@ -245,18 +247,27 @@ private fun YvGpsCamApp(
     }
 
     LaunchedEffect(isNetworkOnline) {
+        val hasLocPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+            appContext,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (isNetworkOnline) {
             container.offlineMapRepository.resetNetworkBackoff()
-            val hasLocPerm = androidx.core.content.ContextCompat.checkSelfPermission(
-                appContext,
-                android.Manifest.permission.ACCESS_FINE_LOCATION
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
-                androidx.core.content.ContextCompat.checkSelfPermission(
-                    appContext,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            cameraViewModel.onNetworkConnectivityChanged(isOnline = true, hasLocationPermission = hasLocPerm)
+            if (container.locationMetadataSyncStore.pendingCountFlow.value > 0) {
+                `in`.yourview.yvgpscam.work.LocationMetadataSyncScheduler.enqueueWhenConnected(
+                    context = appContext,
+                    replaceExisting = true
+                )
+            }
         }
+        cameraViewModel.onNetworkConnectivityChanged(
+            isOnline = isNetworkOnline,
+            hasLocationPermission = hasLocPerm
+        )
     }
 
     LaunchedEffect(postUpdateBanner) {
