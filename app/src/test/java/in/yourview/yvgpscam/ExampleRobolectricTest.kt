@@ -340,11 +340,12 @@ class ExampleRobolectricTest {
         vm.toggleLensFacing()
         assertEquals(androidx.camera.core.CameraSelector.LENS_FACING_BACK, vm.hudState.value.lensFacing)
 
-        assertFalse(vm.hudState.value.isFullScreenCamera)
-        vm.toggleFullScreenCamera()
+        assertEquals(`in`.yourview.yvgpscam.ui.viewmodel.CameraAspectRatio.FULL, vm.hudState.value.aspectRatio)
         assertTrue(vm.hudState.value.isFullScreenCamera)
-        vm.setFullScreenCamera(false)
+        vm.toggleFullScreenCamera()
         assertFalse(vm.hudState.value.isFullScreenCamera)
+        vm.setFullScreenCamera(true)
+        assertTrue(vm.hudState.value.isFullScreenCamera)
     }
 
     @Test

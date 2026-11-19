@@ -212,7 +212,6 @@ fun PhotoDetailScreen(
         panByPhotoId[targetId] = nextPan
     }
 
-    SystemBarsImmersiveEffect(immersive = isFullScreenPhoto)
     BackHandler(enabled = isFullScreenPhoto || showDetails) {
         if (isFullScreenPhoto) {
             isFullScreenPhoto = false

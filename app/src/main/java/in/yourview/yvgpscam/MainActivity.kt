@@ -66,6 +66,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import `in`.yourview.yvgpscam.di.YvGpsCamContainer
 import `in`.yourview.yvgpscam.ui.components.AppUpdateDialog
+import `in`.yourview.yvgpscam.ui.components.SystemBarsImmersiveEffect
+import `in`.yourview.yvgpscam.ui.components.applyAppImmersiveFullScreen
 import `in`.yourview.yvgpscam.ui.components.findActivity
 import `in`.yourview.yvgpscam.ui.screens.CameraScreen
 import `in`.yourview.yvgpscam.ui.screens.CloudSyncRouteScreen
@@ -135,6 +137,7 @@ class MainActivity : ComponentActivity() {
             requestedOrientation = resolveScreenOrientationForRoute(isMainCameraPage = true)
         }
         enableEdgeToEdge()
+        applyAppImmersiveFullScreen(window, immersive = true)
         val container = YvGpsCamContainer(applicationContext)
         container.autoSyncCoordinator.start()
         container.appUpdateCoordinator.schedulePeriodicUpdateChecks()
@@ -153,6 +156,13 @@ class MainActivity : ComponentActivity() {
                 volumeInterceptor = volumeInterceptor,
                 notificationUpdateTrigger = notificationUpdateTrigger
             )
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyAppImmersiveFullScreen(window, immersive = true)
         }
     }
 
@@ -186,6 +196,8 @@ private fun YvGpsCamApp(
     val localContext = LocalContext.current
     val hostActivity = remember(localContext) { localContext.findActivity() }
     val isMainCameraPage = currentDestination == null || currentDestination.hasRoute<CameraRoute>()
+
+    SystemBarsImmersiveEffect(immersive = true)
 
     LaunchedEffect(isMainCameraPage, hostActivity) {
         hostActivity?.requestedOrientation = resolveScreenOrientationForRoute(isMainCameraPage)

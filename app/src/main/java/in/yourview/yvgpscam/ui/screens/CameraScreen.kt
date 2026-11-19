@@ -59,8 +59,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,10 +71,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -420,7 +426,8 @@ fun CameraScreen(
     val resolutionSelector = remember(hudState.aspectRatio) {
         val strategy = when (hudState.aspectRatio) {
             CameraAspectRatio.RATIO_16_9 -> AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
-            CameraAspectRatio.RATIO_4_3, CameraAspectRatio.RATIO_1_1 -> AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            CameraAspectRatio.FULL, CameraAspectRatio.RATIO_4_3, CameraAspectRatio.RATIO_1_1 ->
+                AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
         }
         ResolutionSelector.Builder()
             .setAspectRatioStrategy(strategy)
@@ -721,12 +728,10 @@ fun CameraScreen(
     }
 
     val isFullScreenCamera = hudState.isFullScreenCamera && hasCameraPermission
-    SystemBarsImmersiveEffect(immersive = isFullScreenCamera)
-    BackHandler(enabled = hudState.isAutoCapturing || hudState.showToolsDrawer || isFullScreenCamera) {
+    BackHandler(enabled = hudState.isAutoCapturing || hudState.showToolsDrawer) {
         when {
             hudState.isAutoCapturing -> stopAutoCaptureLoop(notify = true)
             hudState.showToolsDrawer -> viewModel.closeToolsDrawer()
-            else -> viewModel.setFullScreenCamera(false)
         }
     }
 
@@ -776,7 +781,9 @@ fun CameraScreen(
                         )
                     )
                 )
-                .statusBarsPadding()
+                .windowInsetsPadding(
+                    WindowInsets.statusBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Top)
+                )
         ) {
             Row(
                 modifier = Modifier
@@ -894,7 +901,9 @@ fun CameraScreen(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
+                    .windowInsetsPadding(
+                        WindowInsets.statusBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Top)
+                    )
                     .padding(top = 60.dp)
             ) {
                 val maxDrawerHeight = (maxHeight * 0.78f).coerceAtLeast(240.dp)
@@ -1142,10 +1151,13 @@ fun CameraScreen(
 
     val zoomOptions = remember(hudState.minZoomRatio, hudState.maxZoomRatio) {
         buildList {
-            if (hudState.minZoomRatio <= 0.7f) add(0.5f)
+            if (hudState.minZoomRatio < 0.95f) {
+                val wideStep = kotlin.math.round(hudState.minZoomRatio * 10f) / 10f
+                add(wideStep.coerceAtLeast(hudState.minZoomRatio))
+            }
             add(1f)
             if (hudState.maxZoomRatio >= 2f) add(2f)
-            if (hudState.minZoomRatio > 0.7f && hudState.maxZoomRatio >= 3f) add(3f)
+            if (hudState.minZoomRatio >= 0.95f && hudState.maxZoomRatio >= 3f) add(3f)
         }
     }
 
@@ -1978,12 +1990,12 @@ fun CameraScreen(
                         ) {
                             val containerRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else 0.75f
                             val targetRatio = hudState.aspectRatio.ratioValue
-                            val previewFrameModifier = if (containerRatio > targetRatio) {
-                                Modifier
+                            val previewFrameModifier = when {
+                                targetRatio <= 0f -> Modifier.fillMaxSize()
+                                containerRatio > targetRatio -> Modifier
                                     .fillMaxHeight()
                                     .aspectRatio(targetRatio, matchHeightConstraintsFirst = true)
-                            } else {
-                                Modifier
+                                else -> Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(targetRatio, matchHeightConstraintsFirst = false)
                             }
@@ -2089,7 +2101,7 @@ private fun ZoomSelectorPill(
         zoomOptions.forEach { zoomVal ->
             val selected = abs(currentZoom - zoomVal) < 0.2f
             val label = when {
-                zoomVal < 1f -> "0.5"
+                zoomVal < 1f -> String.format(Locale.US, "%.1f", zoomVal)
                 zoomVal == 1f -> "1x"
                 else -> "${zoomVal.toInt()}x"
             }

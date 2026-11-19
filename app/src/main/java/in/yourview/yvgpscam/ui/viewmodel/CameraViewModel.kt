@@ -44,6 +44,7 @@ import java.util.UUID
 import kotlin.math.abs
 
 enum class CameraAspectRatio(val label: String, val ratioValue: Float) {
+    FULL("Full", 0f),
     RATIO_4_3("3:4", 3f / 4f),
     RATIO_16_9("16:9", 9f / 16f),
     RATIO_1_1("1:1", 1f)
@@ -60,7 +61,7 @@ enum class CameraCaptureMode(val label: String) {
 data class CameraHudState(
     val lensFacing: Int = CameraSelector.LENS_FACING_BACK,
     val flashMode: Int = ImageCapture.FLASH_MODE_OFF,
-    val aspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_4_3,
+    val aspectRatio: CameraAspectRatio = CameraAspectRatio.FULL,
     val captureMode: CameraCaptureMode = CameraCaptureMode.PHOTO,
     val showGrid: Boolean = true,
     val showToolsDrawer: Boolean = false,
@@ -75,7 +76,7 @@ data class CameraHudState(
     val minZoomRatio: Float = 1f,
     val maxZoomRatio: Float = 6f,
     val isCapturing: Boolean = false,
-    val isFullScreenCamera: Boolean = false,
+    val isFullScreenCamera: Boolean = true,
     val detectedQrText: String? = null,
     val statusMessage: String? = null
 )

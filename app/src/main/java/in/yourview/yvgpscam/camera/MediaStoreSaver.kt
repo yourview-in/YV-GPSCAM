@@ -63,7 +63,7 @@ class MediaStoreSaver(
         mirrorHorizontal: Boolean = false,
         isFrontCamera: Boolean = false,
         deviceOrientationDegrees: Int = 0,
-        targetAspectRatio: CameraAspectRatio = CameraAspectRatio.RATIO_4_3
+        targetAspectRatio: CameraAspectRatio = CameraAspectRatio.FULL
     ): Result<CapturedPhotoEntity> = withContext(Dispatchers.IO) {
         runCatching {
             val decoded = decodeOrientedBitmap(jpegBytes, mirrorHorizontal)
@@ -549,9 +549,10 @@ class MediaStoreSaver(
         ): Bitmap {
             val w = source.width
             val h = source.height
-            if (w <= 0 || h <= 0) return source
+            if (w <= 0 || h <= 0 || targetAspectRatio == CameraAspectRatio.FULL) return source
             val isPortrait = h >= w
             val desiredRatio = when (targetAspectRatio) {
+                CameraAspectRatio.FULL -> return source
                 CameraAspectRatio.RATIO_1_1 -> 1f
                 CameraAspectRatio.RATIO_4_3 -> if (isPortrait) 3f / 4f else 4f / 3f
                 CameraAspectRatio.RATIO_16_9 -> if (isPortrait) 9f / 16f else 16f / 9f

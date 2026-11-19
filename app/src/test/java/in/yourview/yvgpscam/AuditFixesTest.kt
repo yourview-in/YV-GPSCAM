@@ -86,6 +86,11 @@ class AuditFixesTest {
     fun `cropBitmapToAspectRatio enforces exact proportions for 1_1, 3_4, and 16_9`() {
         val portraitSource = Bitmap.createBitmap(1000, 1400, Bitmap.Config.ARGB_8888)
 
+        val fullWide = MediaStoreSaver.cropBitmapToAspectRatio(portraitSource, CameraAspectRatio.FULL)
+        assertSame(portraitSource, fullWide)
+        assertEquals(1000, fullWide.width)
+        assertEquals(1400, fullWide.height)
+
         val square = MediaStoreSaver.cropBitmapToAspectRatio(portraitSource, CameraAspectRatio.RATIO_1_1)
         assertEquals(1000, square.width)
         assertEquals(1000, square.height)
