@@ -475,9 +475,9 @@ fun SettingsScreen(
                             Toast.makeText(
                                 context,
                                 if (mapsConfigured) {
-                                    "Google Maps SDK key is active via BuildConfig.MAPS_API_KEY."
+                                    "YVGPSCAM high-resolution interactive map engine is active."
                                 } else {
-                                    "Add MAPS_API_KEY in AI Studio Secrets or GitHub CI secrets to enable interactive Google Maps tiles."
+                                    "YVGPSCAM built-in interactive & offline map engine is active."
                                 },
                                 Toast.LENGTH_LONG
                             ).show()
@@ -514,7 +514,7 @@ fun SettingsScreen(
                     SettingsNavigationRow(
                         icon = Icons.Default.Link,
                         title = stringResource(R.string.settings_update_feed_url),
-                        subtitle = manifestFeedUrl.ifBlank { "Uses Google Play Store (tap to add custom APK feed)" },
+                        subtitle = manifestFeedUrl.ifBlank { "Default YVGPSCAM update channel (tap to set custom URL)" },
                         onClick = { activeDialog = SettingsChoiceDialog.UPDATE_FEED_URL },
                         testTag = "settings_update_feed_url_row"
                     )
@@ -661,7 +661,7 @@ fun SettingsScreen(
                         value = emailDraft,
                         onValueChange = { emailDraft = it.trim() },
                         label = { Text("Recipient Email") },
-                        placeholder = { Text("reports@company.com") },
+                        placeholder = { Text("reports@yourview.in") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
                         modifier = Modifier
@@ -699,7 +699,7 @@ fun SettingsScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Optional HTTPS JSON manifest or GitHub Releases API URL to auto-push updates to direct-APK users outside Google Play.",
+                            text = "Optional HTTPS JSON release feed URL to automatically check and install YVGPSCAM updates.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -707,7 +707,7 @@ fun SettingsScreen(
                             value = urlDraft,
                             onValueChange = { urlDraft = it.trim() },
                             label = { Text("HTTPS Manifest URL") },
-                            placeholder = { Text("https://example.com/yvgpscam-version.json") },
+                            placeholder = { Text("https://yourview.in/yvgpscam-version.json") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             singleLine = true,
                             modifier = Modifier
@@ -759,12 +759,12 @@ fun SettingsScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "GPS Camera (YVGPSCAM) captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, Google Maps tiles, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports.",
+                            text = "GPS Camera (YVGPSCAM) by YourView (yourview.in) captures verified geotagged photos and videos with live GPS coordinates, Plus Codes, interactive & offline maps, compass azimuth, horizon leveling, QR telemetry, and multi-photo PDF field reports.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Text(
-                            text = "App Version: v${installedBuild.versionName} (Build ${installedBuild.versionCode})\nPackage: ${installedBuild.packageName}\nBuild Model: ${installedBuild.deviceModel}\nAndroid OS: Android ${installedBuild.androidVersion} (${installedBuild.buildDisplay})",
+                            text = "Brand: YourView • yourview.in\nApp Version: v${installedBuild.versionName} (Build ${installedBuild.versionCode})\nPackage: ${installedBuild.packageName}\nBuild Model: ${installedBuild.deviceModel}\nAndroid OS: Android ${installedBuild.androidVersion} (${installedBuild.buildDisplay})",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -20,7 +20,7 @@ enum class StampTemplate(val displayName: String, val subtitle: String) {
 
 enum class StampLayoutTemplate(val displayName: String, val subtitle: String) {
     ADVANCE("Advance Template", "Full customizable map, telemetry, weather & logo card"),
-    SCAN_LOCATION("Scan Location Template", "Scannable Google Maps QR code & location card"),
+    SCAN_LOCATION("Scan Location Template", "Scannable location QR code & coordinate card"),
     DATETIME("DateTime Template", "Hero digital clock, date split & coordinates"),
     CLASSIC("Classic Template", "Clean bright survey card with mini-map & telemetry"),
     REPORTING("Reporting Template", "Check In status badge, inspector & site coordinates"),

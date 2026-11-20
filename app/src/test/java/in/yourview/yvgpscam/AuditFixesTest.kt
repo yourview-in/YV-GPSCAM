@@ -235,7 +235,20 @@ class AuditFixesTest {
         composeRule.onNodeWithTag("settings_maps_status_row")
             .performScrollTo()
             .assertIsDisplayed()
-        composeRule.onNodeWithText("Google Maps API Status").assertIsDisplayed()
+        composeRule.onNodeWithText("Map Engine Status").assertIsDisplayed()
+
+        val statusStrings = listOf(
+            context.getString(R.string.settings_maps_sdk_status),
+            context.getString(R.string.settings_maps_sdk_active),
+            context.getString(R.string.settings_maps_sdk_fallback)
+        ).joinToString(" ")
+        val forbiddenCredits = listOf("AI Studio", "aistudio", "CartoDB", "ArcGIS", "OSM", "GitHub", "Google Maps", "Google Play")
+        forbiddenCredits.forEach { forbidden ->
+            assertFalse(
+                "Found forbidden third-party reference '$forbidden' in map status strings: $statusStrings",
+                statusStrings.contains(forbidden, ignoreCase = true)
+            )
+        }
     }
 
     private fun sampleTelemetry() = GpsTelemetry(

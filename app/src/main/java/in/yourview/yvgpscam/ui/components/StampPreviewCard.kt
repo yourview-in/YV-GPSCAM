@@ -438,7 +438,7 @@ private fun ScanLocationStampCard(
                 ) {
                     Image(
                         bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Scan QR to open location in Google Maps",
+                        contentDescription = "Scan QR to open location coordinates",
                         modifier = Modifier
                             .size((72f * scale).dp)
                             .clip(RoundedCornerShape(8.dp))

@@ -71,7 +71,7 @@ object GoogleDriveAuthHelper {
         val clientId = resolveWebClientId(activity)
             ?: return Result.failure(
                 IllegalStateException(
-                    "Google Sign-In OAuth Web Client ID is missing or invalid in google-services.json (default_web_client_id)."
+                    "Cloud sign-in is not configured for this build. Please contact support at yourview.in."
                 )
             )
 
@@ -95,7 +95,7 @@ object GoogleDriveAuthHelper {
             val rawMsg = e.localizedMessage.orEmpty()
             val friendly = if (rawMsg.contains("28444") || rawMsg.contains("10:") || rawMsg.contains("Developer console", ignoreCase = true)) {
                 IllegalStateException(
-                    "Google Sign-In OAuth mismatch for package ${activity.packageName}. Check that Google Cloud Console has an Android OAuth client matching this app's signing SHA-1 and a valid WEB_CLIENT_ID.",
+                    "Cloud sign-in could not be verified for this build (${activity.packageName}). Please try again or contact yourview.in.",
                     e
                 )
             } else {

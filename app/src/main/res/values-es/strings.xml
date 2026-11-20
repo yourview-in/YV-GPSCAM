@@ -87,9 +87,9 @@
     <string name="settings_update_feed_url">URL del feed de actualizaciones</string>
     <string name="settings_check_updates">Buscar actualizaciones</string>
     <string name="settings_about_app">Acerca de YVGPSCAM</string>
-    <string name="settings_maps_sdk_status">Estado de Google Maps API</string>
-    <string name="settings_maps_sdk_active">Activo — SDK interactivo de Google Maps habilitado</string>
-    <string name="settings_maps_sdk_fallback">Respaldo — CartoDB/ArcGIS/OSM + cuadrícula sin conexión</string>
+    <string name="settings_maps_sdk_status">Estado del motor de mapas</string>
+    <string name="settings_maps_sdk_active">Activo — Motor de mapas interactivo YVGPSCAM habilitado</string>
+    <string name="settings_maps_sdk_fallback">Activo — Motor de mapas integrado y sin conexión YVGPSCAM</string>
 
     <string name="action_save">Guardar</string>
     <string name="action_cancel">Cancelar</string>

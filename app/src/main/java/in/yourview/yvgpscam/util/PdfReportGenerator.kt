@@ -251,7 +251,7 @@ object PdfReportGenerator {
 
                 // Footer
                 canvas.drawText(
-                    "YVGPSCAM Verified Geotag Report  •  Page ${pageIndex + 1} of ${pages.size}",
+                    "YVGPSCAM by YourView (yourview.in)  •  Page ${pageIndex + 1} of ${pages.size}",
                     MARGIN,
                     PAGE_HEIGHT - 16f,
                     bodyPaint

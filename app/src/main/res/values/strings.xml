@@ -87,9 +87,9 @@
     <string name="settings_update_feed_url">Update Release Feed URL</string>
     <string name="settings_check_updates">Check for Updates</string>
     <string name="settings_about_app">About YVGPSCAM</string>
-    <string name="settings_maps_sdk_status">Google Maps API Status</string>
-    <string name="settings_maps_sdk_active">Active — Interactive Google Maps SDK enabled</string>
-    <string name="settings_maps_sdk_fallback">Fallback — Using CartoDB/ArcGIS/OSM + offline grid (add MAPS_API_KEY in Secrets to enable Google SDK)</string>
+    <string name="settings_maps_sdk_status">Map Engine Status</string>
+    <string name="settings_maps_sdk_active">Active — YVGPSCAM high-resolution map engine enabled</string>
+    <string name="settings_maps_sdk_fallback">Active — YVGPSCAM built-in &amp; offline map engine enabled</string>
 
     <string name="action_save">Save</string>
     <string name="action_cancel">Cancel</string>

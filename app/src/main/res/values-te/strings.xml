@@ -87,9 +87,9 @@
     <string name="settings_update_feed_url">అప్‌డేట్ రిలీజ్ ఫీడ్ URL</string>
     <string name="settings_check_updates">అప్‌డేట్‌ల కోసం తనిఖీ చేయండి</string>
     <string name="settings_about_app">YVGPSCAM గురించి</string>
-    <string name="settings_maps_sdk_status">Google Maps API స్థితి</string>
-    <string name="settings_maps_sdk_active">సక్రియం — ఇంటరాక్టివ్ Google Maps SDK ప్రారంభించబడింది</string>
-    <string name="settings_maps_sdk_fallback">ఫాల్‌బ్యాక్ — CartoDB/ArcGIS/OSM &amp; ఆఫ్‌లైన్ గ్రిడ్ సక్రియం</string>
+    <string name="settings_maps_sdk_status">మ్యాప్ ఇంజిన్ స్థితి</string>
+    <string name="settings_maps_sdk_active">సక్రియం — YVGPSCAM ఇంటరాక్టివ్ మ్యాప్ ఇంజిన్ ప్రారంభించబడింది</string>
+    <string name="settings_maps_sdk_fallback">సక్రియం — YVGPSCAM అంతర్నిర్మిత &amp; ఆఫ్‌లైన్ మ్యాప్ ఇంజిన్ సక్రియం</string>
 
     <string name="action_save">సేవ్</string>
     <string name="action_cancel">రద్దు</string>

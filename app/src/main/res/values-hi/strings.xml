@@ -87,9 +87,9 @@
     <string name="settings_update_feed_url">अपडेट रिलीज़ फ़ीड URL</string>
     <string name="settings_check_updates">अपडेट जांचें</string>
     <string name="settings_about_app">YVGPSCAM के बारे में</string>
-    <string name="settings_maps_sdk_status">Google Maps API स्थिति</string>
-    <string name="settings_maps_sdk_active">सक्रिय — इंटरैक्टिव Google Maps SDK सक्षम</string>
-    <string name="settings_maps_sdk_fallback">फ़ॉलबैक — CartoDB/ArcGIS/OSM और ऑफ़लाइन ग्रिड सक्रिय</string>
+    <string name="settings_maps_sdk_status">मैप इंजन स्थिति</string>
+    <string name="settings_maps_sdk_active">सक्रिय — YVGPSCAM इंटरैक्टिव मैप इंजन सक्षम</string>
+    <string name="settings_maps_sdk_fallback">सक्रिय — YVGPSCAM इन-बिल्ट और ऑफ़लाइन मैप इंजन सक्षम</string>
 
     <string name="action_save">सहेजें</string>
     <string name="action_cancel">रद्द करें</string>
